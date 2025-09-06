@@ -9,7 +9,7 @@ export default function ReconnectionOrderForm() {
   const [rua, setRua] = React.useState("");
   const [numero, setNumero] = React.useState("");
   const [pontoRef, setPontoRef] = React.useState("");
-  const [prioridade, setPrioridade] = React.useState(false);
+  const [prioridade, setPrioridade] = React.useState(false); // sempre inicia NORMAL
 
   const [pdfOrdem, setPdfOrdem] = React.useState<File | null>(null);
   const [pdfComprovante, setPdfComprovante] = React.useState<File | null>(null);
@@ -24,6 +24,12 @@ export default function ReconnectionOrderForm() {
   // 🔥 Modal bloqueio por 24h
   const [blockOpen, setBlockOpen] = React.useState(false);
   const [tempoRestante, setTempoRestante] = React.useState<string>("");
+
+  // 🔐 Modal senha Prioridade Diretor
+  const [prioridadeModalOpen, setPrioridadeModalOpen] = React.useState(false);
+  const [senhaDiretor, setSenhaDiretor] = React.useState("");
+  const [senhaErro, setSenhaErro] = React.useState<string | null>(null);
+  const SENHA_DIRETOR = "29101993";
 
   React.useEffect(() => {
     const id = setInterval(() => setNow(new Date().toLocaleString("pt-BR")), 1000);
@@ -46,7 +52,10 @@ export default function ReconnectionOrderForm() {
     let value = e.target.value.replace(/\D/g, "");
     if (value.length > 5) value = value.slice(0, 5);
     setMatricula(value);
+    // sempre que o usuário altera a matrícula, força prioridade para NORMAL
+    setPrioridade(false);
   };
+
   const formatMatricula = () => {
     if (matricula.length < 5) {
       const m = matricula.padStart(5, "0");
@@ -60,10 +69,10 @@ export default function ReconnectionOrderForm() {
   async function fetchMatriculaData(m: string) {
     if (!m) return;
 
-    // 1º tenta buscar em ordens_religacao
+    // 1) tenta buscar em ordens_religacao (mas NÃO herda prioridade)
     let { data, error } = await supabase
       .from("ordens_religacao")
-      .select("bairro, rua, numero, ponto_referencia, prioridade")
+      .select("bairro, rua, numero, ponto_referencia") // removi prioridade do select
       .eq("matricula", m)
       .order("created_at", { ascending: false })
       .limit(1);
@@ -74,11 +83,11 @@ export default function ReconnectionOrderForm() {
       setRua(d?.rua ?? "");
       setNumero(d?.numero ?? "");
       setPontoRef(d?.ponto_referencia ?? "");
-      setPrioridade(!!d?.prioridade);
+      setPrioridade(false); // ✅ SEMPRE normal
       return;
     }
 
-    // 2º se não achou, busca em ordens_corte
+    // 2) se não achou, busca em ordens_corte
     let { data: dataCorte, error: errorCorte } = await supabase
       .from("ordens_corte")
       .select("bairro, rua, numero, ponto_referencia")
@@ -92,7 +101,7 @@ export default function ReconnectionOrderForm() {
       setRua(d?.rua ?? "");
       setNumero(d?.numero ?? "");
       setPontoRef(d?.ponto_referencia ?? "");
-      setPrioridade(false); // corte não tem prioridade
+      setPrioridade(false); // ✅ SEMPRE normal
     }
   }
 
@@ -128,7 +137,7 @@ export default function ReconnectionOrderForm() {
           rua: rua.trim(),
           numero: numero.trim(),
           ponto_referencia: pontoRef.trim(),
-          prioridade,
+          prioridade, // usa o estado atual (normal por padrão; só vira true via senha)
           status: "aguardando_religacao",
         })
         .select("id")
@@ -173,7 +182,7 @@ export default function ReconnectionOrderForm() {
       return;
     }
 
-    // 🔍 Verificar última papeleta dessa matrícula
+    // 🔍 Verificar última papeleta dessa matrícula (bloqueio 24h)
     const { data: ultima, error: errLast } = await supabase
       .from("ordens_religacao")
       .select("created_at")
@@ -181,26 +190,25 @@ export default function ReconnectionOrderForm() {
       .order("created_at", { ascending: false })
       .limit(1);
 
-   if (!errLast && ultima && ultima.length > 0) {
-  const lastCreatedAt = ultima[0]?.created_at;
-  if (lastCreatedAt) {
-    const lastDate = new Date(lastCreatedAt);
-    const agora = new Date();
-    const diffMs = agora.getTime() - lastDate.getTime();
-    const diffHoras = diffMs / (1000 * 60 * 60);
+    if (!errLast && ultima && ultima.length > 0) {
+      const lastCreatedAt = ultima[0]?.created_at;
+      if (lastCreatedAt) {
+        const lastDate = new Date(lastCreatedAt);
+        const agora = new Date();
+        const diffMs = agora.getTime() - lastDate.getTime();
+        const diffHoras = diffMs / (1000 * 60 * 60);
 
-    if (diffHoras < 24) {
-      const restanteMs = 24 * 60 * 60 * 1000 - diffMs;
-      const restanteMin = Math.ceil(restanteMs / (1000 * 60));
-      const h = Math.floor(restanteMin / 60);
-      const min = restanteMin % 60;
-      setTempoRestante(`${h}h ${min}min`);
-      setBlockOpen(true);
-      return; // ❌ bloqueia o cadastro
+        if (diffHoras < 24) {
+          const restanteMs = 24 * 60 * 60 * 1000 - diffMs;
+          const restanteMin = Math.ceil(restanteMs / (1000 * 60));
+          const h = Math.floor(restanteMin / 60);
+          const min = restanteMin % 60;
+          setTempoRestante(`${h}h ${min}min`);
+          setBlockOpen(true);
+          return; // ❌ bloqueia o cadastro
+        }
+      }
     }
-  }
-}
-
 
     // se não tiver comprovante, abrir modal
     if (!pdfComprovante) {
@@ -211,6 +219,39 @@ export default function ReconnectionOrderForm() {
 
     setSaving(true);
     doSave();
+  }
+
+  // ==========================
+  //  PRIORIDADE: Fluxo da senha
+  // ==========================
+  function handleClickPrioridade() {
+    if (prioridade) {
+      // desmarcar não exige senha
+      setPrioridade(false);
+      return;
+    }
+    // marcar → solicitar senha
+    setSenhaDiretor("");
+    setSenhaErro(null);
+    setPrioridadeModalOpen(true);
+  }
+
+  function confirmarSenhaDiretor() {
+    if (senhaDiretor === SENHA_DIRETOR) {
+      setPrioridade(true);
+      setPrioridadeModalOpen(false);
+      setSenhaErro(null);
+      setMsg({ kind: "ok", text: "Prioridade de Diretor liberada." });
+      setTimeout(() => setMsg(null), 1500);
+    } else {
+      setSenhaErro("Senha inválida. Tente novamente.");
+    }
+  }
+
+  function fecharModalPrioridade() {
+    setPrioridadeModalOpen(false);
+    setSenhaDiretor("");
+    setSenhaErro(null);
   }
 
   return (
@@ -236,19 +277,23 @@ export default function ReconnectionOrderForm() {
               onChange={handleMatricula}
               onBlur={() => {
                 const m = formatMatricula();
-                fetchMatriculaData(m);
+                fetchMatriculaData(m); // ⚠️ não herda prioridade
               }}
             />
           </div>
+
           <div className="flex items-center gap-3">
             <div className="flex-1">
               <label className="block text-sm text-slate-300 mb-1">Prioridade</label>
               <div
-                onClick={() => setPrioridade((v) => !v)}
-                className={`w-full cursor-pointer rounded-xl px-3 py-2 border transition
-                  ${prioridade
-                    ? "bg-fuchsia-500/15 border-fuchsia-400/30 text-fuchsia-200"
-                    : "bg-slate-950/60 border-white/10 text-slate-300"}`}
+                onClick={handleClickPrioridade}
+                className={`w-full cursor-pointer rounded-xl px-3 py-2 border transition select-none
+                  ${
+                    prioridade
+                      ? "bg-fuchsia-500/15 border-fuchsia-400/30 text-fuchsia-200"
+                      : "bg-slate-950/60 border-white/10 text-slate-300"
+                  }`}
+                title={prioridade ? "Prioridade liberada pelo diretor" : "Clique para solicitar Prioridade do Diretor"}
               >
                 {prioridade ? "PRIORIDADE (liberada pelo diretor)" : "Normal"}
               </div>
@@ -300,27 +345,49 @@ export default function ReconnectionOrderForm() {
           <div>
             <label className="block text-sm text-slate-300 mb-2">Anexar PDF da papeleta de Religação *</label>
             <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30 cursor-pointer">
-              <input type="file" accept="application/pdf" className="hidden" onChange={(e) => setPdfOrdem(e.target.files?.[0] || null)} />
+              <input
+                type="file"
+                accept="application/pdf"
+                className="hidden"
+                onChange={(e) => setPdfOrdem(e.target.files?.[0] || null)}
+              />
               Selecionar PDF
             </label>
-            <span className="ml-3 text-xs text-slate-400">{pdfOrdem ? pdfOrdem.name : "Nenhum arquivo selecionado"}</span>
+            <span className="ml-3 text-xs text-slate-400">
+              {pdfOrdem ? pdfOrdem.name : "Nenhum arquivo selecionado"}
+            </span>
           </div>
           <div>
             <label className="block text-sm text-slate-300 mb-2">Anexar comprovante (opcional)</label>
             <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-500/20 text-purple-200 ring-1 ring-purple-400/40 hover:bg-purple-500/30 cursor-pointer">
-              <input type="file" accept="application/pdf" className="hidden" onChange={(e) => setPdfComprovante(e.target.files?.[0] || null)} />
+              <input
+                type="file"
+                accept="application/pdf"
+                className="hidden"
+                onChange={(e) => setPdfComprovante(e.target.files?.[0] || null)}
+              />
               Selecionar PDF
             </label>
-            <span className="ml-3 text-xs text-slate-400">{pdfComprovante ? pdfComprovante.name : "Nenhum arquivo selecionado"}</span>
+            <span className="ml-3 text-xs text-slate-400">
+              {pdfComprovante ? pdfComprovante.name : "Nenhum arquivo selecionado"}
+            </span>
           </div>
         </div>
 
         {/* Ações */}
         <div className="flex items-center gap-3 pt-2">
-          <button type="submit" disabled={saving} className="px-4 py-2 rounded-lg bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-500/30 disabled:opacity-50">
+          <button
+            type="submit"
+            disabled={saving}
+            className="px-4 py-2 rounded-lg bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-500/30 disabled:opacity-50"
+          >
             {saving ? "Salvando…" : "Salvar"}
           </button>
-          <button type="button" onClick={clear} className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10">
+          <button
+            type="button"
+            onClick={clear}
+            className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10"
+          >
             Limpar
           </button>
         </div>
@@ -365,7 +432,46 @@ export default function ReconnectionOrderForm() {
         </div>
       )}
 
-      {/* Popup fixo */}
+      {/* Modal SENHA Prioridade Diretor */}
+      {prioridadeModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-sm">
+            <h3 className="text-lg font-semibold text-white mb-2">Prioridade do Diretor</h3>
+            <p className="text-slate-300 text-sm mb-4">
+              Para liberar a <span className="font-semibold">Prioridade Diretor</span>, informe a senha.
+            </p>
+
+            <label className="block text-sm text-slate-300 mb-1">Senha</label>
+            <input
+              type="password"
+              value={senhaDiretor}
+              onChange={(e) => {
+                setSenhaDiretor(e.target.value);
+                setSenhaErro(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") confirmarSenhaDiretor();
+              }}
+              className="w-full rounded-xl bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-fuchsia-400/40 text-white"
+              placeholder="Digite a senha"
+              autoFocus
+            />
+
+            {senhaErro && <div className="mt-2 text-sm text-rose-400">{senhaErro}</div>}
+
+            <div className="mt-5 flex justify-end gap-3">
+              <button onClick={fecharModalPrioridade} className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200">
+                Cancelar
+              </button>
+              <button onClick={confirmarSenhaDiretor} className="px-4 py-2 rounded-lg bg-fuchsia-600 hover:bg-fuchsia-500 text-white">
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast */}
       {msg && (
         <div
           className={`fixed bottom-5 right-5 px-4 py-2 rounded-lg shadow-lg text-sm z-50
