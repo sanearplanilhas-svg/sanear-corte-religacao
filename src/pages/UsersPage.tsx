@@ -21,6 +21,9 @@ const PAPEIS: { value: Papel; label: string }[] = [
   { value: "VISITANTE", label: "Visitante" },
 ];
 
+// 🔐 Senha fixa para liberar edição
+const EDIT_PASSCODE = "29101993";
+
 export default function UsersPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
@@ -37,6 +40,12 @@ export default function UsersPage() {
   const [saving, setSaving] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  // 🔒 Bloqueio por senha
+  const [canEdit, setCanEdit] = useState<boolean>(false);
+  const [showPwdModal, setShowPwdModal] = useState<boolean>(false);
+  const [pwd, setPwd] = useState<string>("");
+  const [pwdErr, setPwdErr] = useState<string>("");
 
   // --------------------------
   // carregar perfil
@@ -61,8 +70,7 @@ export default function UsersPage() {
         const { data: isAdm } = await supabase.rpc("is_admin");
         setIsAdmin(Boolean(isAdm));
       } catch {
-        // fallback: se RPC não existir, tenta pelo papel do usuário
-        // não lança erro — só não definirá admin
+        // se a RPC não existir, ignora (continua como não admin)
       }
 
       // busca perfil
@@ -75,16 +83,10 @@ export default function UsersPage() {
       if (error) throw error;
 
       if (!data) {
-        // cria registro mínimo para o próprio usuário (evita NOT NULL no backend)
+        // cria registro mínimo (evita NOT NULL no backend)
         const defaultNome = "Sem Nome";
         const { error: insErr } = await supabase.from("app_users").insert([
-          {
-            id: uid,
-            email: emailFromAuth,
-            nome: defaultNome,
-            setor: "ADM",
-            papel: "VISITANTE",
-          },
+          { id: uid, email: emailFromAuth, nome: defaultNome, setor: "ADM", papel: "VISITANTE" },
         ]);
         if (insErr) throw insErr;
 
@@ -104,6 +106,9 @@ export default function UsersPage() {
           papel: (data.papel as Papel) || "VISITANTE",
         });
       }
+
+      // Sempre começa bloqueado
+      setCanEdit(false);
     } catch (e: any) {
       setErrorMsg(e.message || "Erro ao carregar perfil.");
     } finally {
@@ -148,12 +153,39 @@ export default function UsersPage() {
       if (error) throw error;
 
       setSuccessMsg("Perfil atualizado com sucesso!");
-      await loadProfile(); // reflete normalizações/updated_at
+
+      // re-carrega (para refletir normalizações) e re-bloqueia
+      await loadProfile();
+      setCanEdit(false);
     } catch (e: any) {
       setErrorMsg(e.message || "Erro ao salvar perfil.");
     } finally {
       setSaving(false);
     }
+  }
+
+  // --------------------------
+  // bloqueio / desbloqueio
+  // --------------------------
+  function openUnlockModal() {
+    setPwd("");
+    setPwdErr("");
+    setShowPwdModal(true);
+  }
+
+  function checkPwdAndUnlock() {
+    if (pwd === EDIT_PASSCODE) {
+      setCanEdit(true);
+      setShowPwdModal(false);
+      setPwd("");
+      setPwdErr("");
+    } else {
+      setPwdErr("Senha inválida.");
+    }
+  }
+
+  function relock() {
+    setCanEdit(false);
   }
 
   useEffect(() => {
@@ -179,15 +211,43 @@ export default function UsersPage() {
     <div className="max-w-5xl mx-auto">
       <div className="flex items-center gap-3 mb-6">
         <h1 className="text-3xl font-bold">Meu Perfil</h1>
+
+        {/* badges */}
         {!isAdmin && (
           <span className="ml-auto text-xs px-2 py-1 rounded bg-slate-800 text-slate-300">
-            Edição limitada
+            Edição de papel restrita
           </span>
         )}
         {isAdmin && (
           <span className="ml-auto text-xs px-2 py-1 rounded bg-emerald-600/20 text-emerald-300 ring-1 ring-emerald-400/30">
             Administrador
           </span>
+        )}
+
+        {/* ações à direita */}
+        {!canEdit ? (
+          <button
+            onClick={openUnlockModal}
+            className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white"
+          >
+            Editar
+          </button>
+        ) : (
+          <div className="flex gap-2">
+            <button
+              onClick={relock}
+              className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-100"
+            >
+              Bloquear
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white"
+            >
+              {saving ? "Salvando…" : "Salvar"}
+            </button>
+          </div>
         )}
       </div>
 
@@ -206,7 +266,7 @@ export default function UsersPage() {
         <div className="px-5 py-4 border-b border-white/10">
           <h2 className="text-lg font-semibold text-slate-200">Informações do usuário</h2>
           <p className="text-xs text-slate-400 mt-1">
-            Gerencie seus dados pessoais e seu nível de acesso ao sistema.
+            Para editar, clique em <b>Editar</b> e informe a senha.
           </p>
         </div>
 
@@ -237,7 +297,8 @@ export default function UsersPage() {
                 value={form.nome}
                 onChange={(e) => setForm((f) => ({ ...f, nome: e.target.value }))}
                 placeholder="Ex.: João da Silva"
-                className="w-full p-2 rounded-lg bg-slate-800 text-slate-200 border border-white/10 outline-none focus:ring-2 ring-indigo-400/40"
+                disabled={!canEdit}
+                className="w-full p-2 rounded-lg bg-slate-800 text-slate-200 border border-white/10 outline-none focus:ring-2 ring-indigo-400/40 disabled:opacity-60"
               />
               <p className="text-[11px] text-slate-500 mt-1">
                 Como deseja aparecer em relatórios e telas.
@@ -257,7 +318,8 @@ export default function UsersPage() {
                 value={form.setor}
                 onChange={(e) => setForm((f) => ({ ...f, setor: e.target.value }))}
                 placeholder="Ex.: ADM, Direção, Atendimento…"
-                className="w-full p-2 rounded-lg bg-slate-800 text-slate-200 border border-white/10 outline-none focus:ring-2 ring-indigo-400/40"
+                disabled={!canEdit}
+                className="w-full p-2 rounded-lg bg-slate-800 text-slate-200 border border-white/10 outline-none focus:ring-2 ring-indigo-400/40 disabled:opacity-60"
               />
               <p className="text-[11px] text-slate-500 mt-1">
                 Escolha uma opção ou descreva seu setor.
@@ -272,11 +334,10 @@ export default function UsersPage() {
                 value={form.telefone}
                 onChange={(e) => setForm((f) => ({ ...f, telefone: e.target.value }))}
                 placeholder="DDD + número"
-                className="w-full p-2 rounded-lg bg-slate-800 text-slate-200 border border-white/10 outline-none focus:ring-2 ring-indigo-400/40"
+                disabled={!canEdit}
+                className="w-full p-2 rounded-lg bg-slate-800 text-slate-200 border border-white/10 outline-none focus:ring-2 ring-indigo-400/40 disabled:opacity-60"
               />
-              <p className="text-[11px] text-slate-500 mt-1">
-                Opcional. Uso interno para contato.
-              </p>
+              <p className="text-[11px] text-slate-500 mt-1">Opcional. Uso interno para contato.</p>
             </div>
           </div>
 
@@ -287,7 +348,7 @@ export default function UsersPage() {
             </label>
             <select
               value={form.papel}
-              disabled={!isAdmin}
+              disabled={!canEdit || !isAdmin}
               onChange={(e) =>
                 setForm((f) => ({ ...f, papel: e.target.value.toUpperCase() as Papel }))
               }
@@ -304,25 +365,58 @@ export default function UsersPage() {
               Defina o nível de acesso ao sistema. (Somente admin pode alterar)
             </p>
           </div>
-
-          {/* Ações */}
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              onClick={loadProfile}
-              className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-100"
-            >
-              Recarregar
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white"
-            >
-              {saving ? "Salvando…" : "Salvar"}
-            </button>
-          </div>
         </div>
       </div>
+
+      {/* 🔐 Modal de senha para liberar edição */}
+      {showPwdModal && (
+        <div className="fixed inset-0 z-50">
+          {/* Backdrop que bloqueia o fundo */}
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+
+          <div className="relative z-10 min-h-screen flex items-center justify-center p-4">
+            <div className="w-full max-w-sm rounded-xl bg-slate-900 border border-white/10 p-5">
+              <h2 className="text-lg font-bold text-slate-100 mb-2">Desbloquear edição</h2>
+              <p className="text-sm text-slate-400 mb-4">
+                Informe a senha para liberar a edição deste perfil.
+              </p>
+
+              <input
+                autoFocus
+                type="password"
+                value={pwd}
+                onChange={(e) => {
+                  setPwd(e.target.value);
+                  setPwdErr("");
+                }}
+                onKeyDown={(e) => e.key === "Enter" && checkPwdAndUnlock()}
+                placeholder="Senha"
+                className="w-full p-2 rounded bg-slate-800 text-white mb-2"
+              />
+              {pwdErr && <div className="text-rose-400 text-sm mb-2">{pwdErr}</div>}
+
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => {
+                    setShowPwdModal(false);
+                    setPwd("");
+                    setPwdErr("");
+                  }}
+                  className="px-3 py-2 rounded bg-slate-700 hover:bg-slate-600 text-white"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={checkPwdAndUnlock}
+                  className="px-3 py-2 rounded bg-emerald-600 hover:bg-emerald-700 text-white"
+                >
+                  Desbloquear
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
