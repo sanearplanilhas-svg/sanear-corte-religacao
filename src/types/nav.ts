@@ -8,5 +8,4 @@ export type NavKey =
   | "ordensAll"
   | "papeletasAll"
   | "relatorios"
-  | "usuarios"
-  | "config";
+  | "usuarios";

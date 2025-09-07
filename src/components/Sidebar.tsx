@@ -11,7 +11,6 @@ import {
   FileCheck,
   BarChart2,
   Users,
-  Settings,
   LogOut,
 } from "lucide-react";
 
@@ -54,7 +53,6 @@ function Item({
         <Icon size={18} />
       </span>
       <span className="text-sm font-medium">{label}</span>
-      {/* marcador lateral animado */}
       <span
         className={[
           "ml-auto h-5 w-1 rounded-full transition-all",
@@ -84,7 +82,7 @@ export default function Sidebar({ active, onSelect }: Props) {
 
   return (
     <aside className="w-72 min-h-screen bg-slate-950/95 border-r border-white/10 flex flex-col">
-      {/* topo / logo */}
+      {/* topo */}
       <div className="px-4 py-4 border-b border-white/10">
         <div className="text-lg font-semibold">
           <span className="text-indigo-400">SANEAR</span>{" "}
@@ -94,95 +92,28 @@ export default function Sidebar({ active, onSelect }: Props) {
 
       {/* navegação */}
       <div className="flex-1 p-3 space-y-1 overflow-y-auto">
-        {/* Principal */}
         <SectionTitle>Principal</SectionTitle>
-        <Item
-          icon={LayoutDashboard}
-          label="Dashboard"
-          k="dashboard"
-          active={active === "dashboard"}
-          onSelect={onSelect}
-        />
+        <Item icon={LayoutDashboard} label="Dashboard" k="dashboard" active={active === "dashboard"} onSelect={onSelect} />
 
-        {/* Cadastro de serviços */}
         <SectionTitle>Cadastro de serviços</SectionTitle>
-        <Item
-          icon={Scissors}
-          label="Nova ordem de corte"
-          k="corteNew"
-          active={active === "corteNew"}
-          onSelect={onSelect}
-        />
-        <Item
-          icon={PlugZap}
-          label="Nova papeleta de religação"
-          k="religacaoNew"
-          active={active === "religacaoNew"}
-          onSelect={onSelect}
-        />
+        <Item icon={Scissors} label="Nova ordem de corte" k="corteNew" active={active === "corteNew"} onSelect={onSelect} />
+        <Item icon={PlugZap} label="Nova papeleta de religação" k="religacaoNew" active={active === "religacaoNew"} onSelect={onSelect} />
 
-        {/* Serviços pendentes */}
         <SectionTitle>Serviços pendentes</SectionTitle>
-        <Item
-          icon={ClipboardList}
-          label="OS de corte pendentes"
-          k="cortePend"
-          active={active === "cortePend"}
-          onSelect={onSelect}
-        />
-        <Item
-          icon={ClipboardCheck}
-          label="Papeletas pendentes"
-          k="papeletasPend"
-          active={active === "papeletasPend"}
-          onSelect={onSelect}
-        />
+        <Item icon={ClipboardList} label="OS de corte pendentes" k="cortePend" active={active === "cortePend"} onSelect={onSelect} />
+        <Item icon={ClipboardCheck} label="Papeletas pendentes" k="papeletasPend" active={active === "papeletasPend"} onSelect={onSelect} />
 
-        {/* Consultas */}
         <SectionTitle>Consultas</SectionTitle>
-        <Item
-          icon={FileClock}
-          label="Todos os corte"
-          k="ordensAll"
-          active={active === "ordensAll"}
-          onSelect={onSelect}
-        />
-        <Item
-          icon={FileCheck}
-          label="Todas as religação"
-          k="papeletasAll"
-          active={active === "papeletasAll"}
-          onSelect={onSelect}
-        />
+        <Item icon={FileClock} label="Todos os corte" k="ordensAll" active={active === "ordensAll"} onSelect={onSelect} />
+        <Item icon={FileCheck} label="Todas as religação" k="papeletasAll" active={active === "papeletasAll"} onSelect={onSelect} />
 
-        {/* Administração */}
         <SectionTitle>Administração</SectionTitle>
-        <Item
-          icon={BarChart2}
-          label="Relatórios"
-          k="relatorios"
-          active={active === "relatorios"}
-          onSelect={onSelect}
-        />
-        <Item
-          icon={Users}
-          label="Usuários"
-          k="usuarios"
-          active={active === "usuarios"}
-          onSelect={onSelect}
-        />
+        <Item icon={BarChart2} label="Relatórios" k="relatorios" active={active === "relatorios"} onSelect={onSelect} />
+        <Item icon={Users} label="Usuários" k="usuarios" active={active === "usuarios"} onSelect={onSelect} />
       </div>
 
-      {/* rodapé */}
+      {/* rodapé: só o botão Sair (removemos “Histórico/Config”) */}
       <div className="p-3 border-t border-white/10 space-y-2">
-        <Item
-          icon={Settings}
-          label="Configurações"
-          k="config"
-          active={active === "config"}
-          onSelect={onSelect}
-        />
-
         <button
           onClick={handleSignOut}
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-rose-600/15 text-rose-200 ring-1 ring-rose-400/30 hover:bg-rose-600/25 transition-all"

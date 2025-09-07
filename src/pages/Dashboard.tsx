@@ -19,26 +19,27 @@ import UsersPage from "./UsersPage";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 
 export default function Dashboard() {
-  const [active, setActive] = React.useState<NavKey>("dashboard");
+  const [active, setActive] = useState<NavKey>("dashboard");
 
   const [aguardandoCorte, setAguardandoCorte] = useState(0);
   const [aguardandoRelig, setAguardandoRelig] = useState(0);
   const [cortadas, setCortadas] = useState(0);
   const [ativas, setAtivas] = useState(0);
 
-  // 🔧 Filtro
+  // Filtro
   const [showFiltro, setShowFiltro] = useState(false);
   const [dateStart, setDateStart] = useState("");
   const [dateEnd, setDateEnd] = useState("");
   const [allDates, setAllDates] = useState(true);
 
-  // 🔧 Bairros
+  // Bairros
   const [bairros, setBairros] = useState<{ id: string; bairro: string }[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [novoBairro, setNovoBairro] = useState("");
   const [deleteMode, setDeleteMode] = useState(false);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
 
+  // ---------- helpers ----------
   const norm = (s?: string | null) =>
     (s ?? "")
       .toLowerCase()
@@ -137,7 +138,6 @@ export default function Dashboard() {
     }
   };
 
-  // 🔧 Buscar bairros
   const fetchBairros = async () => {
     const { data, error } = await supabase
       .from("avisos_bairros")
@@ -146,7 +146,6 @@ export default function Dashboard() {
     if (!error && data) setBairros(data);
   };
 
-  // 🔧 Salvar bairros
   const salvarBairro = async () => {
     const bairrosLista = novoBairro
       .split("\n")
@@ -180,6 +179,7 @@ export default function Dashboard() {
     fetchBairros();
   }, [dateStart, dateEnd, allDates]);
 
+  // ---------- componente interno (definido ANTES do uso) ----------
   function BigStat({
     title,
     value,
@@ -208,6 +208,7 @@ export default function Dashboard() {
     );
   }
 
+  // ---------- UI ----------
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       {/* Sidebar fixa */}
@@ -394,36 +395,42 @@ export default function Dashboard() {
                   <CutOrderForm />
                 </>
               )}
+
               {active === "religacaoNew" && (
                 <>
                   <h1 className="text-2xl">Nova ordem de religação</h1>
                   <ReconnectionOrderForm />
                 </>
               )}
+
               {active === "cortePend" && (
                 <>
                   <h1 className="text-2xl">Cortes pendentes</h1>
                   <PendingCutsTable />
                 </>
               )}
+
               {active === "papeletasPend" && (
                 <>
                   <h1 className="text-2xl">Religações pendentes</h1>
                   <PendingReconnectionsTable />
                 </>
               )}
+
               {active === "ordensAll" && (
                 <>
                   <h1 className="text-2xl">Todas as ordens</h1>
                   <AllOrdersTable />
                 </>
               )}
+
               {active === "papeletasAll" && (
                 <>
                   <h1 className="text-2xl">Todas as papeletas</h1>
                   <AllReconnectionsTable />
                 </>
               )}
+
               {active === "usuarios" && <UsersPage />}
 
               {active === "relatorios" && (
