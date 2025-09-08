@@ -16,7 +16,7 @@ type CutRow = {
   cortada_em: string | null;
 };
 
-// util para normalizar textos ("Aguardando_Corte" -> "aguardando corte")
+// normaliza string p/ comparação robusta (acentos, underscores, etc)
 const norm = (s?: string | null) =>
   (s ?? "")
     .toLowerCase()
@@ -26,10 +26,9 @@ const norm = (s?: string | null) =>
     .replace(/\s+/g, " ")
     .trim();
 
-// chip de status padronizado (igual ao das telas de Pendentes)
+// chip de status padronizado (igual às telas de Pendentes)
 function StatusBadge({ status }: { status: string }) {
   const s = norm(status);
-
   const CORTE_PEND = new Set(["aguardando corte", "pendente", "aguardando"]);
   const CORTE_DONE = new Set(["cortada", "cortado", "feito"]);
 
@@ -51,6 +50,8 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+type StatusFilter = "all" | "aguardando" | "cortada";
+
 export default function AllOrdersTable() {
   const [rows, setRows] = React.useState<CutRow[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -61,6 +62,9 @@ export default function AllOrdersTable() {
     startDate: null,
     endDate: null,
   });
+
+  // 🔎 novo: filtro por status
+  const [statusFilter, setStatusFilter] = React.useState<StatusFilter>("all");
 
   const [deleteMode, setDeleteMode] = React.useState(false);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
@@ -131,19 +135,68 @@ export default function AllOrdersTable() {
     setMsg({ kind: "ok", text: "OS excluídas com sucesso." });
   }
 
+  // aplica filtro de status em memória (robusto via norm)
+  const filteredRows = React.useMemo(() => {
+    if (statusFilter === "all") return rows;
+
+    return rows.filter((r) => {
+      const s = norm(r.status);
+      if (statusFilter === "aguardando") {
+        return s === "aguardando corte" || s === "pendente" || s === "aguardando";
+      }
+      if (statusFilter === "cortada") {
+        return s === "cortada" || s === "cortado" || s === "feito";
+      }
+      return true;
+    });
+  }, [rows, statusFilter]);
+
   return (
     <div className="rounded-2xl bg-slate-900/50 ring-1 ring-white/10 p-4">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
         <div>
           <h3 className="font-semibold">Todas as ordens</h3>
           <p className="text-slate-400 text-sm">Lista completa das ordens de corte.</p>
         </div>
-        <button
-          onClick={load}
-          className="text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10"
-        >
-          {loading ? "Atualizando…" : "Atualizar"}
-        </button>
+        <div className="flex items-center gap-2">
+          {/* 🔘 Filtro de status */}
+          <div className="flex items-center gap-1 rounded-xl bg-white/5 ring-1 ring-white/10 p-1">
+            <button
+              onClick={() => setStatusFilter("all")}
+              className={`px-3 py-1.5 text-xs rounded-lg ${
+                statusFilter === "all" ? "bg-white/10" : "hover:bg-white/5"
+              }`}
+              title="Mostrar todos"
+            >
+              Todos
+            </button>
+            <button
+              onClick={() => setStatusFilter("aguardando")}
+              className={`px-3 py-1.5 text-xs rounded-lg ${
+                statusFilter === "aguardando" ? "bg-white/10" : "hover:bg-white/5"
+              }`}
+              title="Somente Aguardando Corte"
+            >
+              Aguardando Corte
+            </button>
+            <button
+              onClick={() => setStatusFilter("cortada")}
+              className={`px-3 py-1.5 text-xs rounded-lg ${
+                statusFilter === "cortada" ? "bg-white/10" : "hover:bg-white/5"
+              }`}
+              title="Somente Cortada"
+            >
+              Cortada
+            </button>
+          </div>
+
+          <button
+            onClick={load}
+            className="text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10"
+          >
+            {loading ? "Atualizando…" : "Atualizar"}
+          </button>
+        </div>
       </div>
 
       <ListFilterBar
@@ -167,9 +220,7 @@ export default function AllOrdersTable() {
       {msg && (
         <div
           className={`mb-3 text-sm px-3 py-2 rounded-lg ${
-            msg.kind === "ok"
-              ? "bg-emerald-500/15 text-emerald-300"
-              : "bg-rose-500/15 text-rose-300"
+            msg.kind === "ok" ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"
           }`}
         >
           {msg.text}
@@ -193,7 +244,7 @@ export default function AllOrdersTable() {
             </tr>
           </thead>
           <tbody className="text-slate-200">
-            {rows.map((r) => (
+            {filteredRows.map((r) => (
               <tr key={r.id} className="border-t border-white/5">
                 {deleteMode && (
                   <td className="py-2 text-center">
@@ -218,11 +269,7 @@ export default function AllOrdersTable() {
                 <td className="py-2 text-center">
                   {r.pdf_path ? (
                     <a
-                      href={
-                        supabase.storage
-                          .from("ordens-pdfs")
-                          .getPublicUrl(r.pdf_path).data.publicUrl
-                      }
+                      href={supabase.storage.from("ordens-pdfs").getPublicUrl(r.pdf_path).data.publicUrl}
                       target="_blank"
                       className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30"
                     >
@@ -241,7 +288,7 @@ export default function AllOrdersTable() {
               </tr>
             ))}
 
-            {rows.length === 0 && (
+            {filteredRows.length === 0 && (
               <tr>
                 <td colSpan={deleteMode ? 10 : 9} className="py-6 text-center text-slate-400">
                   Nenhuma ordem encontrada.

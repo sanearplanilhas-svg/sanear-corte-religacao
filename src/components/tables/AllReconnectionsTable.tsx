@@ -16,7 +16,7 @@ type ReligRow = {
   created_at: string;
 };
 
-// util para normalizar textos
+// normaliza string p/ comparação robusta
 const norm = (s?: string | null) =>
   (s ?? "")
     .toLowerCase()
@@ -26,26 +26,21 @@ const norm = (s?: string | null) =>
     .replace(/\s+/g, " ")
     .trim();
 
-// chip de status padronizado (igual ao das telas de Pendentes)
+// chip de status padronizado (igual às telas de Pendentes)
 function StatusBadge({ status }: { status: string }) {
   const s = norm(status);
 
-  const RELIG_PEND = new Set(["aguardando religacao", "aguardando religacao", "aguardando religacao", "aguardando religacao", "aguardando religacao", "aguardando religacao", "aguardando religacao", "aguardando religacao"]);
-  // (acima só para garantir, mas o essencial:)
-  RELIG_PEND.add("aguardando religacao");
-  RELIG_PEND.add("aguardando religacao"); // sem acento mesmo
-  RELIG_PEND.add("aguardando religacao");
-  RELIG_PEND.add("aguardando religacao");
-  // vale: "aguardando religacao" e "aguardando religacao" já normaliza
-
-  const RELIG_PEND_FALLBACK = new Set(["aguardando religacao", "aguardando religacao", "aguardando religacao"]);
-
+  const RELIG_PEND = new Set([
+    "aguardando religacao",
+    "aguardando religacao", // redundâncias inofensivas p/ reforçar normalização
+    "aguardando",
+  ]);
   const RELIG_ATIVA = new Set(["ativa", "ativo"]);
 
   let cls = "bg-slate-500/20 text-slate-300 ring-slate-400/30";
   let label = status;
 
-  if (s === "aguardando religacao" || s === "aguardando religacao" || s.includes("aguardando")) {
+  if (RELIG_PEND.has(s) || s.startsWith("aguardando")) {
     cls = "bg-amber-500/20 text-amber-300 ring-amber-400/30";
     label = "aguardando religação";
   } else if (RELIG_ATIVA.has(s)) {
@@ -60,6 +55,8 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+type StatusFilter = "all" | "aguardando" | "ativa";
+
 export default function AllReconnectionsTable() {
   const [rows, setRows] = React.useState<ReligRow[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -70,6 +67,9 @@ export default function AllReconnectionsTable() {
     startDate: null,
     endDate: null,
   });
+
+  // 🔎 novo: filtro por status
+  const [statusFilter, setStatusFilter] = React.useState<StatusFilter>("all");
 
   // +24h
   const [over24h, setOver24h] = React.useState(false);
@@ -97,7 +97,6 @@ export default function AllReconnectionsTable() {
         "id, matricula, bairro, rua, numero, ponto_referencia, prioridade, status, pdf_ordem_path, ativa_em, created_at"
       );
 
-    // busca livre
     if (filter.q.trim() !== "") {
       const q = filter.q.trim();
       query = query.or(`matricula.ilike.%${q}%,bairro.ilike.%${q}%,rua.ilike.%${q}%`);
@@ -151,6 +150,22 @@ export default function AllReconnectionsTable() {
     setMsg({ kind: "ok", text: "Papeletas excluídas com sucesso." });
   }
 
+  // aplica filtro de status em memória
+  const filteredRows = React.useMemo(() => {
+    if (statusFilter === "all") return rows;
+
+    return rows.filter((r) => {
+      const s = norm(r.status);
+      if (statusFilter === "aguardando") {
+        return s === "aguardando religacao" || s.startsWith("aguardando");
+      }
+      if (statusFilter === "ativa") {
+        return s === "ativa" || s === "ativo";
+      }
+      return true;
+    });
+  }, [rows, statusFilter]);
+
   return (
     <div className="rounded-2xl bg-slate-900/50 ring-1 ring-white/10 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
@@ -159,6 +174,38 @@ export default function AllReconnectionsTable() {
           <p className="text-slate-400 text-sm">Lista completa das papeletas de religação.</p>
         </div>
         <div className="flex items-center gap-2">
+          {/* 🔘 Filtro de status */}
+          <div className="flex items-center gap-1 rounded-xl bg-white/5 ring-1 ring-white/10 p-1">
+            <button
+              onClick={() => setStatusFilter("all")}
+              className={`px-3 py-1.5 text-xs rounded-lg ${
+                statusFilter === "all" ? "bg-white/10" : "hover:bg-white/5"
+              }`}
+              title="Mostrar todos"
+            >
+              Todos
+            </button>
+            <button
+              onClick={() => setStatusFilter("aguardando")}
+              className={`px-3 py-1.5 text-xs rounded-lg ${
+                statusFilter === "aguardando" ? "bg-white/10" : "hover:bg-white/5"
+              }`}
+              title="Somente Aguardando Religação"
+            >
+              Aguardando Religação
+            </button>
+            <button
+              onClick={() => setStatusFilter("ativa")}
+              className={`px-3 py-1.5 text-xs rounded-lg ${
+                statusFilter === "ativa" ? "bg-white/10" : "hover:bg-white/5"
+              }`}
+              title="Somente Ativa"
+            >
+              Ativa
+            </button>
+          </div>
+
+          {/* +24h toggle */}
           <button
             type="button"
             onClick={() => setOver24h((v) => !v)}
@@ -209,9 +256,7 @@ export default function AllReconnectionsTable() {
       {msg && (
         <div
           className={`mb-3 text-sm px-3 py-2 rounded-lg ${
-            msg.kind === "ok"
-              ? "bg-emerald-500/15 text-emerald-300"
-              : "bg-rose-500/15 text-rose-300"
+            msg.kind === "ok" ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"
           }`}
         >
           {msg.text}
@@ -235,7 +280,7 @@ export default function AllReconnectionsTable() {
             </tr>
           </thead>
           <tbody className="text-slate-200">
-            {rows.map((r) => (
+            {filteredRows.map((r) => (
               <tr key={r.id} className="border-t border-white/5">
                 {deleteMode && (
                   <td className="py-2 text-center">
@@ -270,11 +315,7 @@ export default function AllReconnectionsTable() {
                 <td className="py-2 text-center">
                   {r.pdf_ordem_path ? (
                     <a
-                      href={
-                        supabase.storage
-                          .from("ordens-pdfs")
-                          .getPublicUrl(r.pdf_ordem_path).data.publicUrl
-                      }
+                      href={supabase.storage.from("ordens-pdfs").getPublicUrl(r.pdf_ordem_path).data.publicUrl}
                       target="_blank"
                       rel="noreferrer"
                       className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30"
@@ -290,7 +331,7 @@ export default function AllReconnectionsTable() {
               </tr>
             ))}
 
-            {rows.length === 0 && (
+            {filteredRows.length === 0 && (
               <tr>
                 <td colSpan={deleteMode ? 10 : 9} className="py-6 text-center text-slate-400">
                   Nenhuma papeleta encontrada.
