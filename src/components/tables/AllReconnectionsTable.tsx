@@ -13,30 +13,74 @@ type ReligRow = {
   status: string;
   pdf_ordem_path: string | null;
   ativa_em: string | null;
-  created_at: string; // usado em "Criado em"
+  created_at: string;
 };
+
+// util para normalizar textos
+const norm = (s?: string | null) =>
+  (s ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+// chip de status padronizado (igual ao das telas de Pendentes)
+function StatusBadge({ status }: { status: string }) {
+  const s = norm(status);
+
+  const RELIG_PEND = new Set(["aguardando religacao", "aguardando religacao", "aguardando religacao", "aguardando religacao", "aguardando religacao", "aguardando religacao", "aguardando religacao", "aguardando religacao"]);
+  // (acima só para garantir, mas o essencial:)
+  RELIG_PEND.add("aguardando religacao");
+  RELIG_PEND.add("aguardando religacao"); // sem acento mesmo
+  RELIG_PEND.add("aguardando religacao");
+  RELIG_PEND.add("aguardando religacao");
+  // vale: "aguardando religacao" e "aguardando religacao" já normaliza
+
+  const RELIG_PEND_FALLBACK = new Set(["aguardando religacao", "aguardando religacao", "aguardando religacao"]);
+
+  const RELIG_ATIVA = new Set(["ativa", "ativo"]);
+
+  let cls = "bg-slate-500/20 text-slate-300 ring-slate-400/30";
+  let label = status;
+
+  if (s === "aguardando religacao" || s === "aguardando religacao" || s.includes("aguardando")) {
+    cls = "bg-amber-500/20 text-amber-300 ring-amber-400/30";
+    label = "aguardando religação";
+  } else if (RELIG_ATIVA.has(s)) {
+    cls = "bg-emerald-500/20 text-emerald-300 ring-emerald-400/30";
+    label = "ativa";
+  }
+
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 ${cls}`}>
+      {label}
+    </span>
+  );
+}
 
 export default function AllReconnectionsTable() {
   const [rows, setRows] = React.useState<ReligRow[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [msg, setMsg] = React.useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
-  // filtros da barra (datas são ignoradas quando over24h = true)
   const [filter, setFilter] = React.useState<ListFilter>({
     q: "",
     startDate: null,
     endDate: null,
   });
 
-  // ▶️ Toggle do modo +24h: apenas papeletas com mais de 24h de criadas
+  // +24h
   const [over24h, setOver24h] = React.useState(false);
 
   const [deleteMode, setDeleteMode] = React.useState(false);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
   function toggleSelect(id: string) {
-    setSelectedIds(prev => {
+    setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }
@@ -53,23 +97,20 @@ export default function AllReconnectionsTable() {
         "id, matricula, bairro, rua, numero, ponto_referencia, prioridade, status, pdf_ordem_path, ativa_em, created_at"
       );
 
-    // 🔎 Pesquisa livre
+    // busca livre
     if (filter.q.trim() !== "") {
       const q = filter.q.trim();
       query = query.or(`matricula.ilike.%${q}%,bairro.ilike.%${q}%,rua.ilike.%${q}%`);
     }
 
     if (over24h) {
-      // ✅ +24h ligado: mostra apenas criadas há mais de 24h (pelo relógio do PC)
       const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       query = query.lte("created_at", cutoff);
     } else {
-      // 🔁 Modo normal: (a pedido) mostrar TUDO; se quiser usar os campos De/Até, descomente:
       if (filter.startDate) query = query.gte("ativa_em", `${filter.startDate}T00:00:00`);
-      if (filter.endDate)   query = query.lte("ativa_em", `${filter.endDate}T23:59:59`);
+      if (filter.endDate) query = query.lte("ativa_em", `${filter.endDate}T23:59:59`);
     }
 
-    // Ordena por criação (mais recentes primeiro)
     query = query.order("created_at", { ascending: false });
 
     const { data, error } = await query;
@@ -79,13 +120,11 @@ export default function AllReconnectionsTable() {
     setLoading(false);
   }
 
-  // 🔁 carrega inicialmente
   React.useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 🔁 recarrega quando o modo +24h muda (evita usar valor antigo por fechamento)
   React.useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -106,7 +145,7 @@ export default function AllReconnectionsTable() {
       setMsg({ kind: "err", text: `Falha ao excluir: ${error.message}` });
       return;
     }
-    setRows(prev => prev.filter(r => !selectedIds.has(r.id)));
+    setRows((prev) => prev.filter((r) => !selectedIds.has(r.id)));
     setSelectedIds(new Set());
     setDeleteMode(false);
     setMsg({ kind: "ok", text: "Papeletas excluídas com sucesso." });
@@ -120,10 +159,9 @@ export default function AllReconnectionsTable() {
           <p className="text-slate-400 text-sm">Lista completa das papeletas de religação.</p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Botão +24h (toggle) */}
           <button
             type="button"
-            onClick={() => setOver24h(v => !v)}
+            onClick={() => setOver24h((v) => !v)}
             className={`px-3 py-1.5 rounded-lg border text-xs ${
               over24h
                 ? "bg-rose-600 text-white border-rose-500 hover:bg-rose-500"
@@ -143,7 +181,6 @@ export default function AllReconnectionsTable() {
         </div>
       </div>
 
-      {/* Barra de filtros (datas são ignoradas quando +24h está ativo) */}
       <ListFilterBar
         value={filter}
         onChange={setFilter}
@@ -155,21 +192,26 @@ export default function AllReconnectionsTable() {
         deletable
         deleteMode={deleteMode}
         selectedCount={selectedIds.size}
-        onToggleDeleteMode={() => { setDeleteMode(v => !v); setSelectedIds(new Set()); }}
+        onToggleDeleteMode={() => {
+          setDeleteMode((v) => !v);
+          setSelectedIds(new Set());
+        }}
         onConfirmDelete={handleBulkDelete}
       />
 
-      {/* Banner do modo +24h */}
       {over24h && (
         <div className="mb-3 text-xs px-3 py-2 rounded-lg bg-rose-500/15 text-rose-300 border border-rose-400/30">
-          Filtro <strong>+24h</strong> ativo: mostrando apenas papeletas criadas há mais de 24h (baseado no horário do seu dispositivo).
+          Filtro <strong>+24h</strong> ativo: mostrando apenas papeletas criadas há mais de 24h
+          (baseado no horário do seu dispositivo).
         </div>
       )}
 
       {msg && (
         <div
           className={`mb-3 text-sm px-3 py-2 rounded-lg ${
-            msg.kind === "ok" ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"
+            msg.kind === "ok"
+              ? "bg-emerald-500/15 text-emerald-300"
+              : "bg-rose-500/15 text-rose-300"
           }`}
         >
           {msg.text}
@@ -207,7 +249,9 @@ export default function AllReconnectionsTable() {
                 )}
                 <td className="py-2">{r.matricula}</td>
                 <td className="py-2">{r.bairro}</td>
-                <td className="py-2">{r.rua}, {r.numero}</td>
+                <td className="py-2">
+                  {r.rua}, {r.numero}
+                </td>
                 <td className="py-2">{r.ponto_referencia || "-"}</td>
                 <td className="py-2">
                   {r.prioridade ? (
@@ -221,21 +265,25 @@ export default function AllReconnectionsTable() {
                   )}
                 </td>
                 <td className="py-2 text-center">
-                  <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-white/5 ring-1 ring-white/10">
-                    {r.status}
-                  </span>
+                  <StatusBadge status={r.status} />
                 </td>
                 <td className="py-2 text-center">
                   {r.pdf_ordem_path ? (
                     <a
-                      href={supabase.storage.from("ordens-pdfs").getPublicUrl(r.pdf_ordem_path).data.publicUrl}
+                      href={
+                        supabase.storage
+                          .from("ordens-pdfs")
+                          .getPublicUrl(r.pdf_ordem_path).data.publicUrl
+                      }
                       target="_blank"
                       rel="noreferrer"
                       className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30"
                     >
                       Imprimir
                     </a>
-                  ) : "—"}
+                  ) : (
+                    "—"
+                  )}
                 </td>
                 <td className="py-2 text-center">{fmtDateTime(r.created_at)}</td>
                 <td className="py-2 text-center">{fmtDateTime(r.ativa_em)}</td>

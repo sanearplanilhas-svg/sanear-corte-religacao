@@ -16,6 +16,41 @@ type CutRow = {
   cortada_em: string | null;
 };
 
+// util para normalizar textos ("Aguardando_Corte" -> "aguardando corte")
+const norm = (s?: string | null) =>
+  (s ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+// chip de status padronizado (igual ao das telas de Pendentes)
+function StatusBadge({ status }: { status: string }) {
+  const s = norm(status);
+
+  const CORTE_PEND = new Set(["aguardando corte", "pendente", "aguardando"]);
+  const CORTE_DONE = new Set(["cortada", "cortado", "feito"]);
+
+  let cls = "bg-slate-500/20 text-slate-300 ring-slate-400/30";
+  let label = status;
+
+  if (CORTE_PEND.has(s)) {
+    cls = "bg-amber-500/20 text-amber-300 ring-amber-400/30";
+    label = "aguardando corte";
+  } else if (CORTE_DONE.has(s)) {
+    cls = "bg-rose-600/20 text-rose-300 ring-rose-400/30";
+    label = "cortada";
+  }
+
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 ${cls}`}>
+      {label}
+    </span>
+  );
+}
+
 export default function AllOrdersTable() {
   const [rows, setRows] = React.useState<CutRow[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -30,9 +65,10 @@ export default function AllOrdersTable() {
   const [deleteMode, setDeleteMode] = React.useState(false);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
   function toggleSelect(id: string) {
-    setSelectedIds(prev => {
+    setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }
@@ -42,7 +78,9 @@ export default function AllOrdersTable() {
 
     let query = supabase
       .from("ordens_corte")
-      .select("id, os, matricula, bairro, rua, numero, ponto_referencia, status, pdf_path, created_at, cortada_em");
+      .select(
+        "id, os, matricula, bairro, rua, numero, ponto_referencia, status, pdf_path, created_at, cortada_em"
+      );
 
     if (filter.startDate) {
       query = query.gte("created_at", `${filter.startDate}T00:00:00`);
@@ -69,6 +107,7 @@ export default function AllOrdersTable() {
 
   React.useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function clearFilters() {
@@ -86,7 +125,7 @@ export default function AllOrdersTable() {
       setMsg({ kind: "err", text: `Falha ao excluir: ${error.message}` });
       return;
     }
-    setRows(prev => prev.filter(r => !selectedIds.has(r.id)));
+    setRows((prev) => prev.filter((r) => !selectedIds.has(r.id)));
     setSelectedIds(new Set());
     setDeleteMode(false);
     setMsg({ kind: "ok", text: "OS excluídas com sucesso." });
@@ -118,14 +157,19 @@ export default function AllOrdersTable() {
         deletable
         deleteMode={deleteMode}
         selectedCount={selectedIds.size}
-        onToggleDeleteMode={() => { setDeleteMode(v => !v); setSelectedIds(new Set()); }}
+        onToggleDeleteMode={() => {
+          setDeleteMode((v) => !v);
+          setSelectedIds(new Set());
+        }}
         onConfirmDelete={handleBulkDelete}
       />
 
       {msg && (
         <div
           className={`mb-3 text-sm px-3 py-2 rounded-lg ${
-            msg.kind === "ok" ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"
+            msg.kind === "ok"
+              ? "bg-emerald-500/15 text-emerald-300"
+              : "bg-rose-500/15 text-rose-300"
           }`}
         >
           {msg.text}
@@ -164,23 +208,29 @@ export default function AllOrdersTable() {
                 <td className="py-2">{r.matricula}</td>
                 <td className="py-2">{r.os || "-"}</td>
                 <td className="py-2">{r.bairro}</td>
-                <td className="py-2">{r.rua}, {r.numero}</td>
+                <td className="py-2">
+                  {r.rua}, {r.numero}
+                </td>
                 <td className="py-2">{r.ponto_referencia || "-"}</td>
                 <td className="py-2 text-center">
-                  <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-white/5 ring-1 ring-white/10">
-                    {r.status}
-                  </span>
+                  <StatusBadge status={r.status} />
                 </td>
                 <td className="py-2 text-center">
                   {r.pdf_path ? (
                     <a
-                      href={supabase.storage.from("ordens-pdfs").getPublicUrl(r.pdf_path).data.publicUrl}
+                      href={
+                        supabase.storage
+                          .from("ordens-pdfs")
+                          .getPublicUrl(r.pdf_path).data.publicUrl
+                      }
                       target="_blank"
                       className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30"
                     >
                       Imprimir
                     </a>
-                  ) : ("—")}
+                  ) : (
+                    "—"
+                  )}
                 </td>
                 <td className="py-2 text-center">
                   {new Date(r.created_at).toLocaleString("pt-BR")}
