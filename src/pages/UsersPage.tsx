@@ -1,6 +1,6 @@
 // src/pages/UsersPage.tsx
 import React, { useEffect, useState } from "react";
-import { supabase } from "../supabaseClient";
+import { supabase } from "../lib/supabase";
 
 type Papel = "ADM" | "DIRETOR" | "COORDENADOR" | "OPERADOR" | "TERCEIRIZADA" | "VISITANTE";
 

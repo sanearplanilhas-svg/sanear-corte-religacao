@@ -2,7 +2,7 @@
 import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { User, Lock, LogIn, RotateCcw, HelpCircle } from "lucide-react";
-import { supabase } from "../supabaseClient";
+import { supabase } from "../lib/supabase";
 
 // Imagens (coloque em src/assets/)
 import logoColatina from "../assets/colatina.png";

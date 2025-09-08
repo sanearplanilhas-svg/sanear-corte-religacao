@@ -1,15 +1,17 @@
+// src/lib/supabase.ts
 import { createClient } from "@supabase/supabase-js";
 
-// Vite: defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY em .env.local
-const supabaseUrl =
-  (import.meta as any).env?.VITE_SUPABASE_URL ||
-  "https://lgnaejzkwandwpwohcnw.supabase.co";
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL!;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY!;
 
-const supabaseAnonKey =
-  (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxnbmFlanprd2FuZHdwd29oY253Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU2Mjg5OTgsImV4cCI6MjA3MTIwNDk5OH0.NkNmm11W6IJvatUNyI-WrSVggoo5OrIkA9O53lqNAhc";
-
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Persistência + refresh automático do token
+const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true, // útil caso use magic link
+  },
+});
 
 export { supabase };
 export default supabase;

@@ -1,7 +1,7 @@
 // src/pages/Dashboard.tsx
 import React, { useEffect, useState } from "react";
 import type { NavKey } from "../types/nav";
-import { supabase } from "../supabaseClient";
+import { supabase } from "../lib/supabase";
 
 import Sidebar from "../components/Sidebar";
 import Topbar from "../components/Topbar";
