@@ -48,7 +48,7 @@ export default function UsersPage() {
   const [pwdErr, setPwdErr] = useState<string>("");
 
   // --------------------------
-  // carregar perfil
+  // carregar perfil (robusto contra email duplicado)
   // --------------------------
   async function loadProfile() {
     setLoading(true);
@@ -63,48 +63,100 @@ export default function UsersPage() {
       const emailFromAuth = auth.user?.email || "";
       if (!uid) throw new Error("Sessão inválida. Faça login novamente.");
 
-      setUserId(uid);
-
-      // checa admin (RPC is_admin)
+      // checa admin (RPC is_admin) - se a RPC não existir, ignora
       try {
         const { data: isAdm } = await supabase.rpc("is_admin");
         setIsAdmin(Boolean(isAdm));
       } catch {
-        // se a RPC não existir, ignora (continua como não admin)
+        setIsAdmin(false);
       }
 
-      // busca perfil
-      const { data, error } = await supabase
+      // 1) tenta achar por ID (uid do auth)
+      const { data: byId, error: byIdErr } = await supabase
         .from("app_users")
         .select("id,email,nome,setor,telefone,papel")
         .eq("id", uid)
         .maybeSingle();
 
-      if (error) throw error;
+      if (byIdErr) throw byIdErr;
 
-      if (!data) {
-        // cria registro mínimo (evita NOT NULL no backend)
-        const defaultNome = "Sem Nome";
-        const { error: insErr } = await supabase.from("app_users").insert([
-          { id: uid, email: emailFromAuth, nome: defaultNome, setor: "ADM", papel: "VISITANTE" },
-        ]);
-        if (insErr) throw insErr;
-
+      if (byId) {
+        // ✅ achou pelo ID: usa esse
+        setUserId(byId.id);
         setForm({
-          email: emailFromAuth,
-          nome: defaultNome,
-          setor: "ADM",
-          telefone: "",
-          papel: "VISITANTE",
+          email: byId.email || emailFromAuth,
+          nome: byId.nome || "Sem Nome",
+          setor: byId.setor || "ADM",
+          telefone: byId.telefone || "",
+          papel: (byId.papel as Papel) || "VISITANTE",
         });
       } else {
-        setForm({
-          email: data.email || emailFromAuth,
-          nome: data.nome || "Sem Nome",
-          setor: data.setor || "ADM",
-          telefone: data.telefone || "",
-          papel: (data.papel as Papel) || "VISITANTE",
-        });
+        // 2) não achou por ID → tenta por EMAIL
+        const { data: byEmail, error: byEmailErr } = await supabase
+          .from("app_users")
+          .select("id,email,nome,setor,telefone,papel")
+          .eq("email", emailFromAuth)
+          .maybeSingle();
+
+        if (byEmailErr) throw byEmailErr;
+
+        if (byEmail) {
+          // ✅ já existe linha com esse e-mail (mas outro id). Tenta "migrar" para o uid atual.
+          const { error: moveErr } = await supabase
+            .from("app_users")
+            .update({ id: uid })
+            .eq("id", byEmail.id);
+
+          if (!moveErr) {
+            // migrou: passa a usar o uid
+            setUserId(uid);
+            setForm({
+              email: byEmail.email || emailFromAuth,
+              nome: byEmail.nome || "Sem Nome",
+              setor: byEmail.setor || "ADM",
+              telefone: byEmail.telefone || "",
+              papel: (byEmail.papel as Papel) || "VISITANTE",
+            });
+          } else {
+            // não conseguiu mudar o id (FKs etc.) → usa o registro existente
+            setUserId(byEmail.id);
+            setForm({
+              email: byEmail.email || emailFromAuth,
+              nome: byEmail.nome || "Sem Nome",
+              setor: byEmail.setor || "ADM",
+              telefone: byEmail.telefone || "",
+              papel: (byEmail.papel as Papel) || "VISITANTE",
+            });
+          }
+        } else {
+          // 3) não existe por id nem por email → cria com UPSERT (onConflict: email)
+          const defaultNome = "Sem Nome";
+          const { data: created, error: upErr } = await supabase
+            .from("app_users")
+            .upsert(
+              {
+                id: uid,
+                email: emailFromAuth,
+                nome: defaultNome,
+                setor: "ADM",
+                papel: "VISITANTE",
+              },
+              { onConflict: "email" }
+            )
+            .select()
+            .single();
+
+          if (upErr) throw upErr;
+
+          setUserId(created.id);
+          setForm({
+            email: created.email || emailFromAuth,
+            nome: created.nome || defaultNome,
+            setor: created.setor || "ADM",
+            telefone: created.telefone || "",
+            papel: (created.papel as Papel) || "VISITANTE",
+          });
+        }
       }
 
       // Sempre começa bloqueado
