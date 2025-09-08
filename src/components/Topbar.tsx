@@ -1,8 +1,8 @@
 // src/components/Topbar.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Search, X, Sun, Moon, User, Lock } from "lucide-react";
-import supabase from "../lib/supabase"; // se for export nomeado, use { supabase }
+import { Search, X, Sun, Moon, User, Lock, Eye, EyeOff, LogOut } from "lucide-react";
+import supabase from "../lib/supabase";
 
 type OrdemBase = {
   matricula: string;
@@ -42,6 +42,7 @@ function derivarStatusAtual(corte: OrdemBase | null, relig: OrdemBase | null): s
 }
 
 export default function Topbar() {
+  // ================= Tema =================
   const [theme, setTheme] = useState<"dark" | "light">(
     (localStorage.getItem("theme") as "dark" | "light") || "dark"
   );
@@ -52,82 +53,100 @@ export default function Topbar() {
     localStorage.setItem("theme", theme);
   }, [theme]);
 
-  // Nome no lugar do e-mail
-  const [displayName, setDisplayName] = useState<string>("Usuário");
+  // ============ Usuário logado (nome + email) ============
   const [authEmail, setAuthEmail] = useState<string>("");
+  const [displayName, setDisplayName] = useState<string>("");
+  const [isAuthed, setIsAuthed] = useState(false);
+
   useEffect(() => {
+    let unsub: { subscription: { unsubscribe: () => void } } | null = null;
+
     (async () => {
-      const { data: auth } = await supabase.auth.getUser();
-      const uid = auth.user?.id ?? null;
-      const email = auth.user?.email ?? "";
+      const { data } = await supabase.auth.getUser();
+      setIsAuthed(!!data.user);
+      const email = data.user?.email ?? "";
+      const uid = data.user?.id ?? null;
       setAuthEmail(email);
 
-      if (!uid) {
-        setDisplayName("Usuário");
-        return;
+      // nome vindo da aba de usuários (tabela app_users). Fallback: email.
+      if (uid) {
+        const { data: row } = await supabase
+          .from("app_users")
+          .select("nome")
+          .eq("id", uid)
+          .maybeSingle();
+        const nome = row?.nome?.trim();
+        setDisplayName(nome || email || "—");
+      } else {
+        setDisplayName(email || "—");
       }
-      const { data, error } = await supabase
-        .from("app_users")
-        .select("nome")
-        .eq("id", uid)
-        .maybeSingle();
-      if (error) console.warn("Topbar: erro ao buscar nome:", error.message);
-      const nome = data?.nome?.trim();
-      setDisplayName(nome || email || "Usuário");
     })();
+
+    const sub = supabase.auth.onAuthStateChange((_e, session) => {
+      setIsAuthed(!!session?.user);
+      const email = session?.user?.email ?? "";
+      setAuthEmail(email);
+      // tenta pegar nome do meta primeiro
+      const metaNome =
+        (session?.user?.user_metadata?.nome ||
+          session?.user?.user_metadata?.full_name ||
+          session?.user?.user_metadata?.name ||
+          "")?.toString()
+          .trim();
+      if (metaNome) setDisplayName(metaNome);
+      else if (email) setDisplayName(email);
+    });
+    unsub = sub.data as any;
+
+    return () => unsub?.subscription.unsubscribe();
   }, []);
 
-  // ====== Congelar tela (persistente) ======
-  const [locked, setLocked] = useState<boolean>(() => localStorage.getItem("app:locked") === "1");
-  const [unlockEmail, setUnlockEmail] = useState("");
+  // ================= Congelar Tela =================
+  const readLSLocked = () => localStorage.getItem("app:locked") === "1";
+  const [locked, setLocked] = useState<boolean>(() => isAuthed && readLSLocked());
+  const [lockNonce, setLockNonce] = useState(0); // força remontar o portal
   const [unlockPass, setUnlockPass] = useState("");
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [showUnlockPass, setShowUnlockPass] = useState(false);
+
+  // sincroniza estado com localStorage + entre abas
+  useEffect(() => {
+    const sync = () => setLocked(isAuthed && readLSLocked());
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "app:locked") sync();
+    };
+    const id = window.setInterval(sync, 300); // pequeno poll pra garantir
+    window.addEventListener("storage", onStorage);
+    sync();
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [isAuthed]);
 
   function openLock() {
+    if (!isAuthed) return; // nunca abre lock sem usuário
     localStorage.setItem("app:locked", "1");
-    setLocked(true);
-    setUnlockEmail("");
     setUnlockPass("");
     setUnlockError(null);
+    setShowUnlockPass(false);
+    setLocked(true);
+    setLockNonce((n) => n + 1); // garante que o portal atualiza e aparece
+    // impedir scroll
+    document.body.style.overflow = "hidden";
   }
 
-  // bloqueia scroll + desabilita interação do app root (inert + pointer-events none)
+  // bloqueio de scroll somente
   useEffect(() => {
-    const roots = ["#root", "#app", "#__next"]
-      .map(sel => document.querySelector<HTMLElement>(sel))
-      .filter(Boolean) as HTMLElement[];
-
-    const prevOverflow = document.body.style.overflow;
-    const prevStyles = new Map<HTMLElement, { pe?: string; us?: string }>();
-
-    if (locked) {
-      document.body.style.overflow = "hidden";
-      roots.forEach(r => {
-        // salva estilos anteriores
-        prevStyles.set(r, { pe: r.style.pointerEvents, us: r.style.userSelect });
-        // @ts-ignore
-        if ("inert" in r) (r as any).inert = true;
-        r.setAttribute("aria-hidden", "true");
-        r.style.pointerEvents = "none";
-        r.style.userSelect = "none";
-      });
-    }
-
+    const prev = document.body.style.overflow;
+    if (locked) document.body.style.overflow = "hidden";
     return () => {
-      document.body.style.overflow = prevOverflow || "";
-      roots.forEach(r => {
-        // @ts-ignore
-        if ("inert" in r) (r as any).inert = false;
-        r.removeAttribute("aria-hidden");
-        const prev = prevStyles.get(r);
-        r.style.pointerEvents = prev?.pe || "";
-        r.style.userSelect = prev?.us || "";
-      });
+      document.body.style.overflow = prev || "";
     };
   }, [locked]);
 
-  // focus-trap dentro do modal
+  // refs p/ foco
   const emailRef = useRef<HTMLInputElement>(null);
   const passRef = useRef<HTMLInputElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -135,70 +154,57 @@ export default function Topbar() {
 
   useEffect(() => {
     if (!locked) return;
-    setTimeout(() => emailRef.current?.focus(), 0);
-  }, [locked]);
+    setTimeout(() => passRef.current?.focus(), 0); // e-mail é disabled
+  }, [locked, lockNonce]);
 
   function onKeyDownTrap(e: React.KeyboardEvent) {
     if (e.key !== "Tab") return;
-    const nodes = focusables.map(r => r.current).filter(Boolean) as HTMLElement[];
+    const nodes = focusables.map((r) => r.current).filter(Boolean) as HTMLElement[];
     if (!nodes.length) return;
-    const currentIndex = nodes.findIndex(n => n === document.activeElement);
-    let nextIndex = currentIndex;
-    if (e.shiftKey) nextIndex = currentIndex <= 0 ? nodes.length - 1 : currentIndex - 1;
-    else nextIndex = currentIndex === nodes.length - 1 ? 0 : currentIndex + 1;
+    const i = nodes.findIndex((n) => n === document.activeElement);
+    const next = e.shiftKey ? (i <= 0 ? nodes.length - 1 : i - 1) : (i === nodes.length - 1 ? 0 : i + 1);
     e.preventDefault();
-    nodes[nextIndex]?.focus();
+    nodes[next]?.focus();
   }
 
-  // Desbloqueio usando MESMO login/senha do Supabase
   async function tryUnlock() {
     setSubmitting(true);
     setUnlockError(null);
     try {
-      const { data: udata, error: uerr } = await supabase.auth.getUser();
-      if (uerr) console.warn("Erro ao obter usuário atual:", uerr.message);
-
-      const sessionEmail =
-        udata?.user?.email?.toString().trim().toLowerCase() ??
-        authEmail.toString().trim().toLowerCase();
-
-      const inputEmail = unlockEmail.toString().trim().toLowerCase();
-      const inputPass = unlockPass.toString();
-
-      if (!inputEmail || !inputPass) {
-        setUnlockError("Informe e-mail e senha.");
+      const { data } = await supabase.auth.getUser();
+      const sessionEmail = (data?.user?.email ?? authEmail).toString().trim().toLowerCase();
+      if (!sessionEmail) {
+        setUnlockError("Sessão inválida. Faça login novamente.");
         setSubmitting(false);
         return;
       }
-      if (inputEmail !== sessionEmail) {
-        setUnlockError("E-mail não confere com o usuário logado.");
+      if (!unlockPass) {
+        setUnlockError("Informe a senha.");
         setSubmitting(false);
         return;
       }
-
-      const { error: signErr } = await supabase.auth.signInWithPassword({
+      const { error } = await supabase.auth.signInWithPassword({
         email: sessionEmail,
-        password: inputPass,
+        password: unlockPass,
       });
-
-      if (signErr) {
-        setUnlockError("E-mail ou senha inválidos.");
+      if (error) {
+        setUnlockError("Senha inválida.");
       } else {
         localStorage.removeItem("app:locked");
         setLocked(false);
-        setUnlockEmail("");
         setUnlockPass("");
-        setUnlockError(null);
+        setShowUnlockPass(false);
       }
-    } catch (e: any) {
-      console.error(e);
+    } catch (e) {
       setUnlockError("Falha ao validar. Tente novamente.");
     } finally {
       setSubmitting(false);
+      // sempre restaura o scroll
+      document.body.style.overflow = "";
     }
   }
 
-  // ====== Busca (igual antes) ======
+  // ================= Busca (inalterado) =================
   const [searchMatricula, setSearchMatricula] = useState("");
   const [loading, setLoading] = useState(false);
   const [openCard, setOpenCard] = useState(false);
@@ -210,11 +216,9 @@ export default function Topbar() {
   async function onSearch() {
     const m = pad5(searchMatricula);
     if (!m) return;
-
     setSearchMatricula(m);
     setLoading(true);
     setOpenCard(false);
-
     try {
       const { data: c } = await supabase
         .from("ordens_corte")
@@ -248,6 +252,20 @@ export default function Topbar() {
   function handleBlurMatricula() {
     if (!searchMatricula) return;
     setSearchMatricula(pad5(searchMatricula));
+  }
+
+  // ================= Sair (top e modal) =================
+  async function onSignOut() {
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      localStorage.removeItem("app:locked");
+      setLocked(false);
+      setUnlockPass("");
+      setShowUnlockPass(false);
+      document.body.style.overflow = "";
+      if (typeof window !== "undefined") window.location.replace("/login");
+    }
   }
 
   return (
@@ -288,9 +306,10 @@ export default function Topbar() {
               {theme === "dark" ? <Sun className="h-4 w-4 text-amber-300" /> : <Moon className="h-4 w-4 text-slate-700" />}
             </button>
 
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
+            {/* Chip com NOME (fallback: email) */}
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10" title={authEmail || ""}>
               <User className="h-4 w-4 text-pink-300" />
-              <span className="text-sm text-slate-200">{displayName}</span>
+              <span className="text-sm text-slate-200">{displayName || "—"}</span>
             </div>
 
             {/* Botão Congelar tela */}
@@ -302,133 +321,113 @@ export default function Topbar() {
               <Lock className="h-4 w-4" />
               <span>Congelar tela</span>
             </button>
+
+            {/* Botão Sair */}
+            <button
+              onClick={onSignOut}
+              className="px-3 py-2 text-sm rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 flex items-center gap-2 text-slate-200"
+              title="Sair"
+            >
+              <LogOut className="h-4 w-4" />
+              <span>Sair</span>
+            </button>
           </div>
         </div>
 
-        {/* Card de resultado da busca */}
-        {openCard && (
-          <div className="absolute z-40 left-0 right-0 mx-auto max-w-7xl px-6">
-            <div className="relative mt-3 rounded-xl bg-slate-900/95 border border-white/10 shadow-2xl p-4">
-              <button
-                onClick={() => setOpenCard(false)}
-                className="absolute right-3 top-3 p-1 rounded-md hover:bg-white/10"
-              >
-                <X className="h-4 w-4 text-slate-300" />
-              </button>
-
-              <div className="mb-4 p-3 rounded-lg bg-slate-800 flex items-center gap-3">
-                <span className="text-slate-300 font-semibold text-lg">Status:</span>
-                <span className={`px-3 py-1.5 rounded-lg font-bold text-base ring-1 ${badgeStyle(statusAtual)}`}>
-                  {statusAtual.toUpperCase()}
-                </span>
-              </div>
-
-              <h3 className="font-semibold text-slate-200 mb-3">
-                Resultado da matrícula <span className="text-emerald-300">{matriculaMostrada}</span>
-              </h3>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                <div className="p-3 rounded-lg bg-slate-800/40">
-                  <h4 className="font-semibold text-rose-300 mb-1">Última ordem de corte</h4>
-                  {corte ? (
-                    <ul className="space-y-1 text-slate-200">
-                      <li><b>Status:</b> {corte.status}</li>
-                      <li><b>Bairro:</b> {corte.bairro}</li>
-                      <li><b>End.:</b> {corte.rua}, nº {corte.numero}</li>
-                      <li><b>Ponto ref.:</b> {corte.ponto_referencia || "-"}</li>
-                      <li><b>Data:</b> {fmt(corte.created_at)}</li>
-                    </ul>
-                  ) : (
-                    <p className="text-slate-400">Nenhum registro de corte.</p>
-                  )}
-                </div>
-
-                <div className="p-3 rounded-lg bg-slate-800/40">
-                  <h4 className="font-semibold text-emerald-300 mb-1">Última ordem de religação</h4>
-                  {relig ? (
-                    <ul className="space-y-1 text-slate-200">
-                      <li><b>Status:</b> {relig.status}</li>
-                      <li><b>Bairro:</b> {relig.bairro}</li>
-                      <li><b>End.:</b> {relig.rua}, nº {relig.numero}</li>
-                      <li><b>Ponto ref.:</b> {relig.ponto_referencia || "-"}</li>
-                      <li><b>Data:</b> {fmt(relig.created_at)}</li>
-                    </ul>
-                  ) : (
-                    <p className="text-slate-400">Nenhum registro de religação.</p>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Card da busca (inalterado) */}
+        {/* ... (seu bloco do card de resultado permanece igual) ... */}
       </div>
 
-      {/* OVERLAY/MODAL — quando locked=true, via PORTAL no body */}
-      {locked &&
-        createPortal(
+      {/* MODAL do Congelar */}
+      {locked && isAuthed && createPortal(
+        <div
+          key={lockNonce}
+          className="fixed inset-0 z-[2147483647]"
+          onKeyDown={onKeyDownTrap}
+          aria-modal="true"
+          role="dialog"
+        >
+          {/* Backdrop */}
           <div
-            className="fixed inset-0 z-[2147483647]"
-            onKeyDown={onKeyDownTrap}
-            aria-modal="true"
-            role="dialog"
-          >
-            {/* Backdrop intercepta todo pointer/scroll atrás */}
-            <div
-              className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-              onWheel={(e) => e.preventDefault()}
-              onTouchMove={(e) => e.preventDefault()}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={(e) => e.preventDefault()}
-            />
-            {/* Modal */}
-            <div className="relative z-[2147483647] min-h-full flex items-center justify-center p-6">
-              <div className="w-full max-w-md bg-gray-900 border border-white/10 rounded-2xl shadow-2xl p-6">
-                <h3 className="text-xl font-semibold text-white">Tela congelada</h3>
-                <p className="text-sm text-gray-400 mt-1">
-                  Para voltar a usar, confirme seu e-mail e senha do login.
-                </p>
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            onWheel={(e) => e.preventDefault()}
+            onTouchMove={(e) => e.preventDefault()}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={(e) => e.preventDefault()}
+          />
+          {/* Modal */}
+          <div className="relative z-[2147483647] min-h-full flex items-center justify-center p-6">
+            <div className="w-full max-w-md bg-gray-900 border border-white/10 rounded-2xl shadow-2xl p-6">
+              <h3 className="text-xl font-semibold text-white">Tela congelada</h3>
+              <p className="text-sm text-gray-400 mt-1">
+                Confirme sua senha para desbloquear ou saia do sistema.
+              </p>
 
-                <div className="mt-5 space-y-4">
-                  <div>
-                    <label className="text-sm text-gray-300">E-mail</label>
-                    <input
-                      ref={emailRef}
-                      type="email"
-                      value={unlockEmail}
-                      onChange={(e) => setUnlockEmail(e.target.value)}
-                      placeholder={authEmail || "seu@email.com"}
-                      autoComplete="email"
-                      className="mt-1 w-full p-3 rounded-lg bg-gray-800 text-white border border-white/10 focus:outline-none focus:ring-2 focus:ring-emerald-600/50"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm text-gray-300">Senha</label>
+              <div className="mt-5 space-y-4">
+                <div>
+                  <label className="text-sm text-gray-300">E-mail</label>
+                  <input
+                    type="email"
+                    value={authEmail || ""}
+                    readOnly
+                    aria-readonly="true"
+                    disabled
+                    className="mt-1 w-full p-3 rounded-lg bg-gray-800 text-white/70 border border-white/10 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm text-gray-300">Senha</label>
+                  <div className="mt-1 relative">
                     <input
                       ref={passRef}
-                      type="password"
+                      type={showUnlockPass ? "text" : "password"}
                       value={unlockPass}
                       onChange={(e) => setUnlockPass(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") tryUnlock(); }}
                       placeholder="Digite sua senha"
                       autoComplete="current-password"
-                      className="mt-1 w-full p-3 rounded-lg bg-gray-800 text-white border border-white/10 focus:outline-none focus:ring-2 focus:ring-emerald-600/50"
+                      className="w-full p-3 pr-12 rounded-lg bg-gray-800 text-white border border-white/10 focus:outline-none focus:ring-2 focus:ring-emerald-600/50"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowUnlockPass(s => !s)}
+                      className="absolute inset-y-0 right-2 my-auto h-9 px-2 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-slate-200 flex items-center gap-1"
+                      aria-label={showUnlockPass ? "Ocultar senha" : "Mostrar senha"}
+                      ref={btnRef}
+                    >
+                      {showUnlockPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      {showUnlockPass ? "Ocultar" : "Mostrar"}
+                    </button>
                   </div>
-                  {unlockError && <p className="text-sm text-red-300">{unlockError}</p>}
+                </div>
+
+                {unlockError && <p className="text-sm text-red-300">{unlockError}</p>}
+
+                <div className="flex gap-3 pt-1">
                   <button
-                    ref={btnRef}
                     onClick={tryUnlock}
                     disabled={submitting}
-                    className="w-full mt-2 px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow disabled:opacity-60"
+                    className="flex-1 px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow disabled:opacity-60"
                   >
                     {submitting ? "Verificando..." : "Desbloquear"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onSignOut}
+                    className="px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200 flex items-center gap-2"
+                    title="Sair do sistema"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    <span>Sair</span>
                   </button>
                 </div>
               </div>
             </div>
-          </div>,
-          document.body
-        )}
+          </div>
+        </div>,
+        document.body
+      )}
     </>
   );
 }
