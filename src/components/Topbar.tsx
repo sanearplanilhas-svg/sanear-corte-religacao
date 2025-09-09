@@ -338,7 +338,62 @@ export default function Topbar() {
           </div>
         </div>
 
-        {/* (seu card de resultado permanece igual) */}
+        {/* Card de resultado da busca */}
+        {openCard && (
+          <div className="absolute z-40 left-0 right-0 mx-auto max-w-7xl px-6">
+            <div className="relative mt-3 rounded-xl bg-slate-900/95 border border-white/10 shadow-2xl p-4">
+              <button
+                onClick={() => setOpenCard(false)}
+                className="absolute right-3 top-3 p-1 rounded-md hover:bg-white/10"
+              >
+                <X className="h-4 w-4 text-slate-300" />
+              </button>
+
+              <div className="mb-4 p-3 rounded-lg bg-slate-800 flex items-center gap-3">
+                <span className="text-slate-300 font-semibold text-lg">Status:</span>
+                <span className={`px-3 py-1.5 rounded-lg font-bold text-base ring-1 ${badgeStyle(statusAtual)}`}>
+                  {statusAtual.toUpperCase()}
+                </span>
+              </div>
+
+              <h3 className="font-semibold text-slate-200 mb-3">
+                Resultado da matrícula <span className="text-emerald-300">{matriculaMostrada}</span>
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                <div className="p-3 rounded-lg bg-slate-800/40">
+                  <h4 className="font-semibold text-rose-300 mb-1">Última ordem de corte</h4>
+                  {corte ? (
+                    <ul className="space-y-1 text-slate-200">
+                      <li><b>Status:</b> {corte.status}</li>
+                      <li><b>Bairro:</b> {corte.bairro}</li>
+                      <li><b>End.:</b> {corte.rua}, nº {corte.numero}</li>
+                      <li><b>Ponto ref.:</b> {corte.ponto_referencia || "-"}</li>
+                      <li><b>Data:</b> {fmt(corte.created_at)}</li>
+                    </ul>
+                  ) : (
+                    <p className="text-slate-400">Nenhum registro de corte.</p>
+                  )}
+                </div>
+
+                <div className="p-3 rounded-lg bg-slate-800/40">
+                  <h4 className="font-semibold text-emerald-300 mb-1">Última ordem de religação</h4>
+                  {relig ? (
+                    <ul className="space-y-1 text-slate-200">
+                      <li><b>Status:</b> {relig.status}</li>
+                      <li><b>Bairro:</b> {relig.bairro}</li>
+                      <li><b>End.:</b> {relig.rua}, nº {relig.numero}</li>
+                      <li><b>Ponto ref.:</b> {relig.ponto_referencia || "-"}</li>
+                      <li><b>Data:</b> {fmt(relig.created_at)}</li>
+                    </ul>
+                  ) : (
+                    <p className="text-slate-400">Nenhum registro de religação.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* MODAL do Congelar */}
