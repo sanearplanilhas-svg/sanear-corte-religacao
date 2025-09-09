@@ -1,7 +1,11 @@
 {
+  "version": 2,
   "buildCommand": "npm install && chmod +x ./node_modules/.bin/vite && npm run build",
   "outputDirectory": "dist",
   "env": {
     "NODE_VERSION": "18"
-  }
+  },
+  "rewrites": [
+    { "source": "/((?!.*\\..*|_next).*)", "destination": "/" }
+  ]
 }
