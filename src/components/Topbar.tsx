@@ -42,7 +42,7 @@ function derivarStatusAtual(corte: OrdemBase | null, relig: OrdemBase | null): s
 }
 
 export default function Topbar() {
-  // ================= Tema =================
+  // Tema
   const [theme, setTheme] = useState<"dark" | "light">(
     (localStorage.getItem("theme") as "dark" | "light") || "dark"
   );
@@ -53,7 +53,7 @@ export default function Topbar() {
     localStorage.setItem("theme", theme);
   }, [theme]);
 
-  // ============ Usuário logado (nome + email) ============
+  // Usuário logado (nome + email)
   const [authEmail, setAuthEmail] = useState<string>("");
   const [displayName, setDisplayName] = useState<string>("");
   const [isAuthed, setIsAuthed] = useState(false);
@@ -68,14 +68,13 @@ export default function Topbar() {
       const uid = data.user?.id ?? null;
       setAuthEmail(email);
 
-      // nome vindo da aba de usuários (tabela app_users). Fallback: email.
       if (uid) {
-        const { data: row } = await supabase
+        const { data: row, error } = await supabase
           .from("app_users")
           .select("nome")
           .eq("id", uid)
           .maybeSingle();
-        const nome = row?.nome?.trim();
+        const nome = error ? undefined : row?.nome?.trim();
         setDisplayName(nome || email || "—");
       } else {
         setDisplayName(email || "—");
@@ -86,7 +85,6 @@ export default function Topbar() {
       setIsAuthed(!!session?.user);
       const email = session?.user?.email ?? "";
       setAuthEmail(email);
-      // tenta pegar nome do meta primeiro
       const metaNome =
         (session?.user?.user_metadata?.nome ||
           session?.user?.user_metadata?.full_name ||
@@ -101,22 +99,22 @@ export default function Topbar() {
     return () => unsub?.subscription.unsubscribe();
   }, []);
 
-  // ================= Congelar Tela =================
+  // Congelar Tela
   const readLSLocked = () => localStorage.getItem("app:locked") === "1";
   const [locked, setLocked] = useState<boolean>(() => isAuthed && readLSLocked());
-  const [lockNonce, setLockNonce] = useState(0); // força remontar o portal
+  const [lockNonce, setLockNonce] = useState(0);
   const [unlockPass, setUnlockPass] = useState("");
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showUnlockPass, setShowUnlockPass] = useState(false);
 
-  // sincroniza estado com localStorage + entre abas
+  // sync com localStorage + entre abas
   useEffect(() => {
     const sync = () => setLocked(isAuthed && readLSLocked());
     const onStorage = (e: StorageEvent) => {
       if (e.key === "app:locked") sync();
     };
-    const id = window.setInterval(sync, 300); // pequeno poll pra garantir
+    const id = window.setInterval(sync, 300);
     window.addEventListener("storage", onStorage);
     sync();
     return () => {
@@ -125,19 +123,27 @@ export default function Topbar() {
     };
   }, [isAuthed]);
 
+  // se a sessão cair, destrava automaticamente
+  useEffect(() => {
+    if (!isAuthed && locked) {
+      localStorage.removeItem("app:locked");
+      setLocked(false);
+      document.body.style.overflow = "";
+    }
+  }, [isAuthed, locked]);
+
   function openLock() {
-    if (!isAuthed) return; // nunca abre lock sem usuário
+    if (!isAuthed) return;
     localStorage.setItem("app:locked", "1");
     setUnlockPass("");
     setUnlockError(null);
     setShowUnlockPass(false);
     setLocked(true);
-    setLockNonce((n) => n + 1); // garante que o portal atualiza e aparece
-    // impedir scroll
+    setLockNonce((n) => n + 1);
     document.body.style.overflow = "hidden";
   }
 
-  // bloqueio de scroll somente
+  // bloqueia só o scroll do body
   useEffect(() => {
     const prev = document.body.style.overflow;
     if (locked) document.body.style.overflow = "hidden";
@@ -147,14 +153,13 @@ export default function Topbar() {
   }, [locked]);
 
   // refs p/ foco
-  const emailRef = useRef<HTMLInputElement>(null);
   const passRef = useRef<HTMLInputElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
-  const focusables = useMemo(() => [emailRef, passRef, btnRef], []);
+  const focusables = useMemo(() => [passRef, btnRef], []);
 
   useEffect(() => {
     if (!locked) return;
-    setTimeout(() => passRef.current?.focus(), 0); // e-mail é disabled
+    setTimeout(() => passRef.current?.focus(), 0);
   }, [locked, lockNonce]);
 
   function onKeyDownTrap(e: React.KeyboardEvent) {
@@ -199,12 +204,11 @@ export default function Topbar() {
       setUnlockError("Falha ao validar. Tente novamente.");
     } finally {
       setSubmitting(false);
-      // sempre restaura o scroll
       document.body.style.overflow = "";
     }
   }
 
-  // ================= Busca (inalterado) =================
+  // Busca (inalterado)
   const [searchMatricula, setSearchMatricula] = useState("");
   const [loading, setLoading] = useState(false);
   const [openCard, setOpenCard] = useState(false);
@@ -254,7 +258,7 @@ export default function Topbar() {
     setSearchMatricula(pad5(searchMatricula));
   }
 
-  // ================= Sair (top e modal) =================
+  // Sair (top e modal) -> redireciona para "/" (evita 404 /login na Vercel)
   async function onSignOut() {
     try {
       await supabase.auth.signOut();
@@ -264,7 +268,7 @@ export default function Topbar() {
       setUnlockPass("");
       setShowUnlockPass(false);
       document.body.style.overflow = "";
-      if (typeof window !== "undefined") window.location.replace("/login");
+      if (typeof window !== "undefined") window.location.replace("/");
     }
   }
 
@@ -334,8 +338,7 @@ export default function Topbar() {
           </div>
         </div>
 
-        {/* Card da busca (inalterado) */}
-        {/* ... (seu bloco do card de resultado permanece igual) ... */}
+        {/* (seu card de resultado permanece igual) */}
       </div>
 
       {/* MODAL do Congelar */}
@@ -394,7 +397,6 @@ export default function Topbar() {
                       onClick={() => setShowUnlockPass(s => !s)}
                       className="absolute inset-y-0 right-2 my-auto h-9 px-2 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-slate-200 flex items-center gap-1"
                       aria-label={showUnlockPass ? "Ocultar senha" : "Mostrar senha"}
-                      ref={btnRef}
                     >
                       {showUnlockPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                       {showUnlockPass ? "Ocultar" : "Mostrar"}
@@ -406,6 +408,7 @@ export default function Topbar() {
 
                 <div className="flex gap-3 pt-1">
                   <button
+                    ref={btnRef}
                     onClick={tryUnlock}
                     disabled={submitting}
                     className="flex-1 px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow disabled:opacity-60"
