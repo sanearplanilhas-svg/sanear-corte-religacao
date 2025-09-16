@@ -23,21 +23,47 @@ function fmt(iso?: string) {
   const d = new Date(iso);
   return isNaN(d.getTime()) ? iso : d.toLocaleString("pt-BR");
 }
-function badgeStyle(status: string) {
-  const s = (status || "").toLowerCase();
-  if (s.includes("ativa")) return "bg-emerald-600 text-white";
-  if (s.includes("aguardando religação") || s.includes("aguardando_religacao")) return "bg-amber-500 text-black";
-  if (s.includes("cortad")) return "bg-rose-600 text-white";
-  if (s.includes("aguardando corte")) return "bg-fuchsia-500 text-white";
-  return "bg-slate-500 text-white";
+
+// normalizador (acentos, _ e espaços)
+function norm(s?: string | null) {
+  return (s ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
+
+// paleta única p/ o app
+function badgeStyle(status: string) {
+  const s = norm(status);
+  // map de grupos
+  const isAtiva = s === "ativa" || s === "ativo";
+  const isAguardandoRelig = s === "aguardando religacao" || s.startsWith("aguardando religacao");
+  const isAguardandoLiber = s === "aguardando liberacao" || s === "liberacao pendente";
+  const isAguardandoCorte = s === "aguardando corte" || s.startsWith("aguardando corte");
+  const isCortada = s.includes("cortad");
+
+  if (isAtiva) return "bg-emerald-600 text-white ring-emerald-400/40";
+  if (isAguardandoRelig) return "bg-amber-500 text-black ring-amber-300/40";
+  if (isAguardandoLiber) return "bg-violet-600 text-white ring-violet-400/40";
+  if (isAguardandoCorte) return "bg-fuchsia-600 text-white ring-fuchsia-400/40";
+  if (isCortada) return "bg-rose-600 text-white ring-rose-400/40";
+  return "bg-slate-500 text-white ring-slate-400/40";
+}
+
 function derivarStatusAtual(corte: OrdemBase | null, relig: OrdemBase | null): string {
-  const rc = relig?.status?.toLowerCase() || "";
-  const cc = corte?.status?.toLowerCase() || "";
-  if (rc.includes("ativa")) return "Ativa";
-  if (rc.includes("aguardando_religacao")) return "Aguardando religação";
+  const rc = norm(relig?.status);
+  const cc = norm(corte?.status);
+
+  if (rc === "ativa" || rc === "ativo") return "Ativa";
+  if (rc === "liberacao pendente") return "Aguardando Liberação";
+  if (rc === "aguardando religacao" || rc.startsWith("aguardando religacao")) return "Aguardando Religação";
+
   if (cc.includes("cortad")) return "Cortada";
-  if (cc.includes("aguardando_corte")) return "Aguardando corte";
+  if (cc === "aguardando corte" || cc.startsWith("aguardando corte")) return "Aguardando Corte";
+
   return "—";
 }
 
@@ -208,7 +234,7 @@ export default function Topbar() {
     }
   }
 
-  // Busca (inalterado)
+  // Busca
   const [searchMatricula, setSearchMatricula] = useState("");
   const [loading, setLoading] = useState(false);
   const [openCard, setOpenCard] = useState(false);
@@ -258,7 +284,7 @@ export default function Topbar() {
     setSearchMatricula(pad5(searchMatricula));
   }
 
-  // Sair (top e modal) -> redireciona para "/" (evita 404 /login na Vercel)
+  // Sair (top e modal)
   async function onSignOut() {
     try {
       await supabase.auth.signOut();
@@ -316,25 +342,26 @@ export default function Topbar() {
               <span className="text-sm text-slate-200">{displayName || "—"}</span>
             </div>
 
-            {/* Botão Congelar tela */}
+            {/* Botão Congelar tela — LARANJA */}
             <button
               onClick={openLock}
-              className="px-3 py-2 text-sm rounded-lg bg-rose-500/20 text-rose-300 ring-1 ring-rose-400/40 hover:bg-rose-500/30 flex items-center gap-2"
+              className="px-3 py-2 text-sm rounded-lg bg-orange-500/20 text-orange-300 ring-1 ring-orange-400/40 hover:bg-orange-500/30 flex items-center gap-2"
               title="Congelar a tela (bloquear)"
             >
               <Lock className="h-4 w-4" />
               <span>Congelar tela</span>
             </button>
 
-            {/* Botão Sair */}
-            <button
-              onClick={onSignOut}
-              className="px-3 py-2 text-sm rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 flex items-center gap-2 text-slate-200"
-              title="Sair"
-            >
-              <LogOut className="h-4 w-4" />
-              <span>Sair</span>
-            </button>
+           <button
+  type="button"
+  onClick={onSignOut}
+  className="px-4 py-2.5 rounded-lg bg-rose-600/20 text-rose-300 ring-1 ring-rose-400/40 hover:bg-rose-600/30 flex items-center gap-2"
+  title="Sair do sistema"
+>
+  <LogOut className="h-4 w-4" />
+  <span>Sair</span>
+</button>
+
           </div>
         </div>
 
@@ -343,7 +370,11 @@ export default function Topbar() {
           <div className="absolute z-40 left-0 right-0 mx-auto max-w-7xl px-6">
             <div className="relative mt-3 rounded-xl bg-slate-900/95 border border-white/10 shadow-2xl p-4">
               <button
-                onClick={() => setOpenCard(false)}
+                onClick={() => {
+                  setOpenCard(false);
+                  // limpa o campo ao fechar o card
+                  setSearchMatricula("");
+                }}
                 className="absolute right-3 top-3 p-1 rounded-md hover:bg-white/10"
               >
                 <X className="h-4 w-4 text-slate-300" />
@@ -470,10 +501,11 @@ export default function Topbar() {
                   >
                     {submitting ? "Verificando..." : "Desbloquear"}
                   </button>
+                  {/* Sair — LARANJA */}
                   <button
                     type="button"
                     onClick={onSignOut}
-                    className="px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200 flex items-center gap-2"
+                    className="px-4 py-2.5 rounded-lg bg-orange-500/20 text-orange-300 ring-1 ring-orange-400/40 hover:bg-orange-500/30 flex items-center gap-2"
                     title="Sair do sistema"
                   >
                     <LogOut className="h-4 w-4" />

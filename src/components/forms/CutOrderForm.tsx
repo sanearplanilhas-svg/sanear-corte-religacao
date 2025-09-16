@@ -20,10 +20,14 @@ export default function CutOrderForm() {
   const [msg, setMsg] = React.useState<Msg>(null);
   const [now, setNow] = React.useState<string>(new Date().toLocaleString("pt-BR"));
 
+  // modal do tipo do corte
+  const [tipoModalOpen, setTipoModalOpen] = React.useState(false);
+
   React.useEffect(() => {
+    if (saving) return;
     const id = setInterval(() => setNow(new Date().toLocaleString("pt-BR")), 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [saving]);
 
   function clear() {
     setMatricula("");
@@ -37,7 +41,7 @@ export default function CutOrderForm() {
     setPdfOrdem(null);
   }
 
-  // 👉 Matrícula
+  // Matrícula
   const handleMatricula = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value.replace(/\D/g, "");
     if (value.length > 5) value = value.slice(0, 5);
@@ -52,11 +56,10 @@ export default function CutOrderForm() {
     return matricula;
   };
 
-  // 🔍 Buscar dados existentes da matrícula (em corte e religação)
+  // Busca dados anteriores
   async function fetchMatriculaData(m: string) {
     if (!m) return;
 
-    // 1º tenta na tabela de corte
     let { data, error } = await supabase
       .from("ordens_corte")
       .select("bairro, rua, numero, ponto_referencia, motivo, motivo_outros")
@@ -65,17 +68,16 @@ export default function CutOrderForm() {
       .limit(1);
 
     if (!error && data && data.length > 0) {
-      const d = data[0];
+      const d = data[0] as any;
       setBairro(d?.bairro ?? "");
       setRua(d?.rua ?? "");
       setNumero(d?.numero ?? "");
       setPontoRef(d?.ponto_referencia ?? "");
-      setMotivo((d as any)?.motivo ?? "");
-      setMotivoOutros((d as any)?.motivo_outros ?? "");
+      setMotivo(d?.motivo ?? "");
+      setMotivoOutros(d?.motivo_outros ?? "");
       return;
     }
 
-    // 2º se não achou em corte, tenta na de religação
     let { data: dataRel, error: errorRel } = await supabase
       .from("ordens_religacao")
       .select("bairro, rua, numero, ponto_referencia")
@@ -84,17 +86,17 @@ export default function CutOrderForm() {
       .limit(1);
 
     if (!errorRel && dataRel && dataRel.length > 0) {
-      const d = dataRel[0];
+      const d = dataRel[0] as any;
       setBairro(d?.bairro ?? "");
       setRua(d?.rua ?? "");
       setNumero(d?.numero ?? "");
       setPontoRef(d?.ponto_referencia ?? "");
-      setMotivo(""); // não existe motivo em religação
+      setMotivo("");
       setMotivoOutros("");
     }
   }
 
-  // 👉 OS
+  // OS
   const handleOs = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value.replace(/\D/g, "");
     if (value.length > 6) value = value.slice(0, 6);
@@ -115,15 +117,7 @@ export default function CutOrderForm() {
     return null;
   }
 
-  async function uploadIfAny(file: File | null, path: string) {
-    if (!file) return null;
-    const { data, error } = await supabase.storage
-      .from("ordens-pdfs")
-      .upload(path, file, { upsert: true, contentType: file.type || "application/pdf" });
-    if (error) throw error;
-    return data?.path ?? null;
-  }
-
+  // 1) validar e abrir modal
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
     const m = formatMatricula();
@@ -133,51 +127,58 @@ export default function CutOrderForm() {
       setTimeout(() => setMsg(null), 2000);
       return;
     }
+    setTipoModalOpen(true);
+  }
 
-    setSaving(true);
-    setMsg(null);
-
+  // 2) após escolher o tipo, salvar (grava corte_na_rua)
+  async function proceedSave(corteNaRua: boolean) {
     try {
-      const user = (await supabase.auth.getUser()).data.user;
+      setTipoModalOpen(false);
+      setSaving(true);
+      setMsg(null);
+
+      const { data: userData, error: userErr } = await supabase.auth.getUser();
+      if (userErr) throw userErr;
+      const user = userData?.user;
       if (!user) throw new Error("Usuário não autenticado.");
 
-      const { data: inserted, error: insErr } = await supabase
-        .from("ordens_corte")
-        .insert({
-          os: os.trim(),
-          matricula: m.trim(),
-          bairro: bairro.trim(),
-          rua: rua.trim(),
-          numero: numero.trim(),
-          ponto_referencia: pontoRef.trim(),
-          motivo,
-          motivo_outros: motivo === "outros" ? motivoOutros.trim() : null,
-          status: "aguardando_corte",
-        })
-        .select("id")
-        .single();
-
-      if (insErr) throw insErr;
-      const id = inserted.id as string;
-
+      const id = crypto.randomUUID();
       const base = `cortes/${user.id}/${id}`;
-      const up1 = await uploadIfAny(pdfOrdem, `${base}/ordem.pdf`);
-      if (up1) {
-        const { error: upErr } = await supabase
-          .from("ordens_corte")
-          .update({ pdf_path: up1 })
-          .eq("id", id);
-        if (upErr) throw upErr;
-      }
+
+      const ordemPath = await (pdfOrdem
+        ? supabase.storage
+            .from("ordens-pdfs")
+            .upload(`${base}/ordem.pdf`, pdfOrdem, {
+              upsert: true,
+              contentType: pdfOrdem.type || "application/pdf",
+            })
+            .then((r) => r.data?.path ?? null)
+        : Promise.resolve(null));
+      if (!ordemPath) throw new Error("Falha ao salvar o PDF obrigatório.");
+
+      const { error: insErr } = await supabase.from("ordens_corte").insert({
+        id,
+        os: os.trim(),
+        matricula: matricula.trim(),
+        bairro: bairro.trim(),
+        rua: rua.trim(),
+        numero: numero.trim(),
+        ponto_referencia: pontoRef.trim(),
+        motivo,
+        motivo_outros: motivo === "outros" ? motivoOutros.trim() : null,
+        status: "aguardando_corte",
+        pdf_ordem_path: ordemPath,
+        corte_na_rua: corteNaRua, // <<< grava aqui
+      });
+      if (insErr) throw insErr;
 
       setMsg({ kind: "ok", text: "OS de corte criada com sucesso!" });
-      setTimeout(() => setMsg(null), 2000);
       clear();
     } catch (e: any) {
       setMsg({ kind: "err", text: e?.message ?? "Falha ao salvar." });
-      setTimeout(() => setMsg(null), 2000);
     } finally {
       setSaving(false);
+      setTimeout(() => setMsg(null), 2000);
     }
   }
 
@@ -327,11 +328,44 @@ export default function CutOrderForm() {
         </div>
       </form>
 
-      {/* Popup fixo no canto */}
+      {/* Modal: tipo de execução do corte */}
+      {tipoModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-lg text-center">
+            <h3 className="text-lg font-semibold text-white">Tipo de execução do corte</h3>
+            <p className="text-slate-300 text-sm mt-1">
+              Para registro interno: este corte será executado <strong>na rua (adutora)</strong>?
+            </p>
+            <div className="mt-5 flex flex-wrap gap-3 justify-center">
+              <button
+                onClick={() => proceedSave(true)}
+                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm"
+              >
+                Sim, na rua (adutora)
+              </button>
+              <button
+                onClick={() => proceedSave(false)}
+                className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-sm"
+              >
+                Não, corte padrão
+              </button>
+              <button
+                onClick={() => setTipoModalOpen(false)}
+                className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white text-sm"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast */}
       {msg && (
         <div
-          className={`fixed bottom-5 right-5 px-4 py-2 rounded-lg shadow-lg text-sm z-50
-            ${msg.kind === "ok" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"}`}
+          className={`fixed bottom-5 right-5 px-4 py-2 rounded-lg shadow-lg text-sm z-50 ${
+            msg.kind === "ok" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
+          }`}
         >
           {msg.text}
         </div>

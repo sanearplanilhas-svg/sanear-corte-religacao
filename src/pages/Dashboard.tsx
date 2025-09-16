@@ -9,8 +9,9 @@ import Topbar from "../components/Topbar";
 import CutOrderForm from "../components/forms/CutOrderForm";
 import ReconnectionOrderForm from "../components/forms/ReconnectionOrderForm";
 
-import PendingCutsTable from "../tables/PendingCutsTable";
-import PendingReconnectionsTable from "../tables/PendingReconnectionsTable";
+// ✅ imports corrigidos para a pasta components/tables
+import PendingCutsTable from "../components/tables/PendingCutsTable";
+import PendingReconnectionsTable from "../components/tables/PendingReconnectionsTable";
 
 import AllOrdersTable from "../components/tables/AllOrdersTable";
 import AllReconnectionsTable from "../components/tables/AllReconnectionsTable";
@@ -179,7 +180,17 @@ export default function Dashboard() {
     fetchBairros();
   }, [dateStart, dateEnd, allDates]);
 
-  // ---------- componente interno (definido ANTES do uso) ----------
+  // 🔁 Auto-refresh a cada 2s (mantém o botão Filtro)
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      fetchCounts();
+      fetchBairros();
+    }, 2000);
+    return () => window.clearInterval(id);
+    // depende dos filtros para recarregar corretamente ao mudar o intervalo
+  }, [dateStart, dateEnd, allDates]);
+
+  // ---------- componente interno ----------
   function BigStat({
     title,
     value,
@@ -223,7 +234,7 @@ export default function Dashboard() {
           <Topbar />
         </div>
 
-        {/* Conteúdo rolável (não passa por baixo da Topbar) */}
+        {/* Conteúdo rolável */}
         <div className="pt-24 px-8">
           <div className="h-[calc(100vh-6rem)] overflow-y-auto pr-3 pb-10">
             <div className="max-w-7xl mx-auto space-y-8">
@@ -239,15 +250,7 @@ export default function Dashboard() {
                       >
                         Filtro
                       </button>
-                      <button
-                        onClick={() => {
-                          fetchCounts();
-                          fetchBairros();
-                        }}
-                        className="px-4 py-2 rounded-lg bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-500/30"
-                      >
-                        Atualizar
-                      </button>
+                      {/* Botão Atualizar removido — agora atualiza automaticamente a cada 2s */}
                     </div>
                   </div>
 
@@ -406,7 +409,7 @@ export default function Dashboard() {
               {active === "cortePend" && (
                 <>
                   <h1 className="text-2xl">Cortes pendentes</h1>
-                  <PendingCutsTable />
+                <PendingCutsTable />
                 </>
               )}
 

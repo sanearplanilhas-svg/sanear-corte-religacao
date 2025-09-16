@@ -14,6 +14,7 @@ type ReligRow = {
   pdf_ordem_path: string | null;
   ativa_em: string | null;
   created_at: string;
+  observacao?: string | null; // usado para extrair nº do hidrômetro e modal
 };
 
 // normaliza string p/ comparação robusta
@@ -26,26 +27,26 @@ const norm = (s?: string | null) =>
     .replace(/\s+/g, " ")
     .trim();
 
-// chip de status padronizado (igual às telas de Pendentes)
+// chip de status padronizado
 function StatusBadge({ status }: { status: string }) {
   const s = norm(status);
 
-  const RELIG_PEND = new Set([
-    "aguardando religacao",
-    "aguardando religacao", // redundâncias inofensivas p/ reforçar normalização
-    "aguardando",
-  ]);
-  const RELIG_ATIVA = new Set(["ativa", "ativo"]);
+  const IS_LIBERACAO_PENDENTE = s === "liberacao pendente";
+  const IS_AGUARDANDO_RELIG = s === "aguardando religacao" || s.startsWith("aguardando");
+  const IS_ATIVA = s === "ativa" || s === "ativo";
 
   let cls = "bg-slate-500/20 text-slate-300 ring-slate-400/30";
   let label = status;
 
-  if (RELIG_PEND.has(s) || s.startsWith("aguardando")) {
+  if (IS_LIBERACAO_PENDENTE) {
+    cls = "bg-violet-500/20 text-violet-200 ring-violet-400/30";
+    label = "Liberação Pendente";
+  } else if (IS_AGUARDANDO_RELIG) {
     cls = "bg-amber-500/20 text-amber-300 ring-amber-400/30";
-    label = "aguardando religação";
-  } else if (RELIG_ATIVA.has(s)) {
+    label = "Aguardando Religação";
+  } else if (IS_ATIVA) {
     cls = "bg-emerald-500/20 text-emerald-300 ring-emerald-400/30";
-    label = "ativa";
+    label = "Ativa";
   }
 
   return (
@@ -55,7 +56,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-type StatusFilter = "all" | "aguardando" | "ativa";
+type StatusFilter = "all" | "liberacao_pendente" | "aguardando" | "ativa";
 
 export default function AllReconnectionsTable() {
   const [rows, setRows] = React.useState<ReligRow[]>([]);
@@ -68,7 +69,7 @@ export default function AllReconnectionsTable() {
     endDate: null,
   });
 
-  // 🔎 novo: filtro por status
+  // filtros separados
   const [statusFilter, setStatusFilter] = React.useState<StatusFilter>("all");
 
   // +24h
@@ -85,8 +86,7 @@ export default function AllReconnectionsTable() {
     });
   }
 
-  const fmtDateTime = (iso: string | null) =>
-    iso ? new Date(iso).toLocaleString("pt-BR") : "—";
+  const fmtDateTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR") : "—");
 
   async function load() {
     setLoading(true);
@@ -94,7 +94,7 @@ export default function AllReconnectionsTable() {
     let query = supabase
       .from("ordens_religacao")
       .select(
-        "id, matricula, bairro, rua, numero, ponto_referencia, prioridade, status, pdf_ordem_path, ativa_em, created_at"
+        "id, matricula, bairro, rua, numero, ponto_referencia, prioridade, status, pdf_ordem_path, ativa_em, created_at, observacao"
       );
 
     if (filter.q.trim() !== "") {
@@ -150,12 +150,15 @@ export default function AllReconnectionsTable() {
     setMsg({ kind: "ok", text: "Papeletas excluídas com sucesso." });
   }
 
-  // aplica filtro de status em memória
+  // filtro status em memória
   const filteredRows = React.useMemo(() => {
     if (statusFilter === "all") return rows;
 
     return rows.filter((r) => {
       const s = norm(r.status);
+      if (statusFilter === "liberacao_pendente") {
+        return s === "liberacao pendente";
+      }
       if (statusFilter === "aguardando") {
         return s === "aguardando religacao" || s.startsWith("aguardando");
       }
@@ -166,6 +169,62 @@ export default function AllReconnectionsTable() {
     });
   }, [rows, statusFilter]);
 
+  // ===== Bloqueio de impressão quando liberação pendente =====
+  const [modalBloqueio, setModalBloqueio] = React.useState<{ open: boolean; matricula?: string }>(
+    { open: false }
+  );
+
+  // ===== Modal Observação =====
+  const [modalObs, setModalObs] = React.useState<{ open: boolean; matricula?: string; obs?: string | null }>(
+    { open: false }
+  );
+
+  // extrai "NOVO HIDRÔMETRO: XXXXX" da observação
+  function extractNovoHidrometro(obs?: string | null): string | undefined {
+    if (!obs) return undefined;
+    const m = obs.match(/NOVO HIDR[ÔO]METRO:\s*([^\s|]+.*?)(?=$|\s*\|)/i);
+    if (m && m[1]) return m[1].trim();
+    return undefined;
+  }
+
+  // Imprimir (bloqueado quando pendente)
+  function renderImprimirCell(row: ReligRow) {
+    const st = norm(row.status);
+    const isPendente = st === "liberacao pendente";
+
+    if (!row.pdf_ordem_path) return "—";
+
+    if (isPendente) {
+      return (
+        <button
+          type="button"
+          onClick={() => setModalBloqueio({ open: true, matricula: row.matricula })}
+          className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30"
+          title="Papeleta pendente de liberação"
+        >
+          Imprimir
+        </button>
+      );
+    }
+
+    const { data } = supabase.storage.from("ordens-pdfs").getPublicUrl(row.pdf_ordem_path);
+    const url = data?.publicUrl;
+
+    if (!url) return <span className="text-slate-400 text-xs">Sem link</span>;
+
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30"
+        title="Imprimir PDF"
+      >
+        Imprimir
+      </a>
+    );
+  }
+
   return (
     <div className="rounded-2xl bg-slate-900/50 ring-1 ring-white/10 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
@@ -174,31 +233,32 @@ export default function AllReconnectionsTable() {
           <p className="text-slate-400 text-sm">Lista completa das papeletas de religação.</p>
         </div>
         <div className="flex items-center gap-2">
-          {/* 🔘 Filtro de status */}
+          {/* filtros de status */}
           <div className="flex items-center gap-1 rounded-xl bg-white/5 ring-1 ring-white/10 p-1">
             <button
               onClick={() => setStatusFilter("all")}
-              className={`px-3 py-1.5 text-xs rounded-lg ${
-                statusFilter === "all" ? "bg-white/10" : "hover:bg-white/5"
-              }`}
+              className={`px-3 py-1.5 text-xs rounded-lg ${statusFilter === "all" ? "bg-white/10" : "hover:bg-white/5"}`}
               title="Mostrar todos"
             >
               Todos
             </button>
             <button
+              onClick={() => setStatusFilter("liberacao_pendente")}
+              className={`px-3 py-1.5 text-xs rounded-lg ${statusFilter === "liberacao_pendente" ? "bg-white/10" : "hover:bg-white/5"}`}
+              title="Somente Liberação Pendente"
+            >
+              Liberação Pendente
+            </button>
+            <button
               onClick={() => setStatusFilter("aguardando")}
-              className={`px-3 py-1.5 text-xs rounded-lg ${
-                statusFilter === "aguardando" ? "bg-white/10" : "hover:bg-white/5"
-              }`}
+              className={`px-3 py-1.5 text-xs rounded-lg ${statusFilter === "aguardando" ? "bg-white/10" : "hover:bg-white/5"}`}
               title="Somente Aguardando Religação"
             >
               Aguardando Religação
             </button>
             <button
               onClick={() => setStatusFilter("ativa")}
-              className={`px-3 py-1.5 text-xs rounded-lg ${
-                statusFilter === "ativa" ? "bg-white/10" : "hover:bg-white/5"
-              }`}
+              className={`px-3 py-1.5 text-xs rounded-lg ${statusFilter === "ativa" ? "bg-white/10" : "hover:bg-white/5"}`}
               title="Somente Ativa"
             >
               Ativa
@@ -277,63 +337,73 @@ export default function AllReconnectionsTable() {
               <th className="text-center font-medium py-2">Ordem (PDF)</th>
               <th className="text-center font-medium py-2">Criado em</th>
               <th className="text-center font-medium py-2">Ativa em</th>
+              {/* novas colunas */}
+              <th className="text-center font-medium py-2">Número do Hidrômetro</th>
+              <th className="text-center font-medium py-2">Observação</th>
             </tr>
           </thead>
           <tbody className="text-slate-200">
-            {filteredRows.map((r) => (
-              <tr key={r.id} className="border-t border-white/5">
-                {deleteMode && (
-                  <td className="py-2 text-center">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(r.id)}
-                      onChange={() => toggleSelect(r.id)}
-                      className="w-4 h-4"
-                    />
+            {filteredRows.map((r) => {
+              const numeroHid = extractNovoHidrometro(r.observacao) ?? "-";
+              return (
+                <tr key={r.id} className="border-t border-white/5">
+                  {deleteMode && (
+                    <td className="py-2 text-center">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(r.id)}
+                        onChange={() => toggleSelect(r.id)}
+                        className="w-4 h-4"
+                      />
+                    </td>
+                  )}
+                  <td className="py-2">{r.matricula}</td>
+                  <td className="py-2">{r.bairro}</td>
+                  <td className="py-2">
+                    {r.rua}, {r.numero}
                   </td>
-                )}
-                <td className="py-2">{r.matricula}</td>
-                <td className="py-2">{r.bairro}</td>
-                <td className="py-2">
-                  {r.rua}, {r.numero}
-                </td>
-                <td className="py-2">{r.ponto_referencia || "-"}</td>
-                <td className="py-2">
-                  {r.prioridade ? (
-                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-fuchsia-500/20 text-fuchsia-300 ring-1 ring-fuchsia-400/30">
-                      PRIORIDADE
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-slate-500/20 text-slate-300 ring-1 ring-slate-400/30">
-                      normal
-                    </span>
-                  )}
-                </td>
-                <td className="py-2 text-center">
-                  <StatusBadge status={r.status} />
-                </td>
-                <td className="py-2 text-center">
-                  {r.pdf_ordem_path ? (
-                    <a
-                      href={supabase.storage.from("ordens-pdfs").getPublicUrl(r.pdf_ordem_path).data.publicUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30"
+                  <td className="py-2">{r.ponto_referencia || "-"}</td>
+                  <td className="py-2">
+                    {r.prioridade ? (
+                      <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-fuchsia-500/20 text-fuchsia-300 ring-1 ring-fuchsia-400/30">
+                        PRIORIDADE
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-slate-500/20 text-slate-300 ring-1 ring-slate-400/30">
+                        Normal
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2 text-center">
+                    <StatusBadge status={r.status} />
+                  </td>
+                  <td className="py-2 text-center">{renderImprimirCell(r)}</td>
+                  <td className="py-2 text-center">{fmtDateTime(r.created_at)}</td>
+                  <td className="py-2 text-center">{fmtDateTime(r.ativa_em)}</td>
+
+                  {/* Número do Hidrômetro: somente número ou "—" (sem botão) */}
+                  <td className="py-2 text-center">{numeroHid}</td>
+
+                  {/* Observação: somente botão Ver */}
+                  <td className="py-2 text-center">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setModalObs({ open: true, matricula: r.matricula, obs: r.observacao ?? "-" })
+                      }
+                      className="px-2 py-1 text-xs rounded-lg bg-white/5 border border-white/10 hover:bg-white/10"
+                      title="Ver observação"
                     >
-                      Imprimir
-                    </a>
-                  ) : (
-                    "—"
-                  )}
-                </td>
-                <td className="py-2 text-center">{fmtDateTime(r.created_at)}</td>
-                <td className="py-2 text-center">{fmtDateTime(r.ativa_em)}</td>
-              </tr>
-            ))}
+                      Ver
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
 
             {filteredRows.length === 0 && (
               <tr>
-                <td colSpan={deleteMode ? 10 : 9} className="py-6 text-center text-slate-400">
+                <td colSpan={deleteMode ? 12 : 11} className="py-6 text-center text-slate-400">
                   Nenhuma papeleta encontrada.
                 </td>
               </tr>
@@ -341,6 +411,50 @@ export default function AllReconnectionsTable() {
           </tbody>
         </table>
       </div>
+
+      {/* modal bloqueio de impressão */}
+      {modalBloqueio.open && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-sm text-center">
+            <h3 className="text-lg font-semibold text-white mb-3">Impressão bloqueada</h3>
+            <p className="text-slate-300 text-sm">
+              A papeleta da matrícula <span className="font-mono font-semibold">{modalBloqueio.matricula}</span> ainda
+              <br />
+              <strong>precisa ser liberada pelo responsável</strong> na tela <em>Liberação de Papeleta</em>.
+            </p>
+            <div className="mt-5">
+              <button
+                onClick={() => setModalBloqueio({ open: false })}
+                className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white"
+              >
+                Ok, entendi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* modal: Observação */}
+      {modalObs.open && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-sm">
+            <h3 className="text-lg font-semibold text-white mb-3">
+              Observação — Matrícula {modalObs.matricula}
+            </h3>
+            <div className="text-slate-300 text-sm whitespace-pre-wrap">
+              {modalObs.obs && modalObs.obs.trim() !== "" ? modalObs.obs : "-"}
+            </div>
+            <div className="mt-5 text-center">
+              <button
+                onClick={() => setModalObs({ open: false })}
+                className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
