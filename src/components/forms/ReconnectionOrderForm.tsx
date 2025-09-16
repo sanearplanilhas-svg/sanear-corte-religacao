@@ -46,7 +46,7 @@ export default function ReconnectionOrderForm() {
   // senha prioridade
   const [prioridadeModalOpen, setPrioridadeModalOpen] = React.useState(false);
   const [senhaDiretor, setSenhaDiretor] = React.useState("");
- const [senhaErro, setSenhaErro] = React.useState<string | null>(null);
+  const [senhaErro, setSenhaErro] = React.useState<string | null>(null);
 
   const SENHA_DIRETOR = "29101993";
 
@@ -401,6 +401,8 @@ export default function ReconnectionOrderForm() {
                   const m = formatMatricula();
                   if (m) fetchMatriculaData(m);
                 }}
+                inputMode="numeric"
+                maxLength={5}
               />
             </div>
 
@@ -429,6 +431,7 @@ export default function ReconnectionOrderForm() {
               <label className="block text-sm text-slate-300 mb-1">Bairro *</label>
               <input
                 className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                placeholder="Ex.: CENTRO"
                 value={bairro}
                 onChange={(e) => setBairro(toUpper(e.target.value))}
               />
@@ -437,6 +440,7 @@ export default function ReconnectionOrderForm() {
               <label className="block text-sm text-slate-300 mb-1">Rua *</label>
               <input
                 className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                placeholder="Ex.: AV. BRASIL"
                 value={rua}
                 onChange={(e) => setRua(toUpper(e.target.value))}
               />
@@ -448,6 +452,7 @@ export default function ReconnectionOrderForm() {
               <label className="block text-sm text-slate-300 mb-1">Número *</label>
               <input
                 className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                placeholder="Ex.: 123"
                 value={numero}
                 onChange={(e) => setNumero(toUpper(e.target.value))}
               />
@@ -456,6 +461,7 @@ export default function ReconnectionOrderForm() {
               <label className="block text-sm text-slate-300 mb-1">Ponto de referência *</label>
               <input
                 className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                placeholder="Ex.: PRÓX. AO POSTO X"
                 value={pontoRef}
                 onChange={(e) => setPontoRef(toUpper(e.target.value))}
               />
