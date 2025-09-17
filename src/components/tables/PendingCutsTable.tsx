@@ -69,10 +69,7 @@ export default function PendingCutsTable() {
   }
 
   async function marcarCortada(id: string) {
-    const { error } = await supabase
-      .from("ordens_corte")
-      .update({ status: "cortada" })
-      .eq("id", id);
+    const { error } = await supabase.from("ordens_corte").update({ status: "cortada" }).eq("id", id);
     if (error) return setMsg({ kind: "err", text: `Falha ao atualizar: ${error.message}` });
 
     setRows((prev) => prev.filter((r) => r.id !== id));
@@ -89,7 +86,7 @@ export default function PendingCutsTable() {
         href={url}
         target="_blank"
         rel="noopener noreferrer"
-        className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30"
+        className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30 whitespace-nowrap"
       >
         Imprimir
       </a>
@@ -99,14 +96,14 @@ export default function PendingCutsTable() {
   function renderCorteNaRua(val: boolean | null) {
     if (val === true) {
       return (
-        <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-emerald-600/20 text-emerald-200 ring-emerald-400/40">
+        <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-emerald-600/20 text-emerald-200 ring-emerald-400/40 whitespace-nowrap">
           SIM
         </span>
       );
     }
     if (val === false) {
       return (
-        <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-rose-600/20 text-rose-200 ring-rose-400/40">
+        <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-rose-600/20 text-rose-200 ring-rose-400/40 whitespace-nowrap">
           NÃO
         </span>
       );
@@ -149,8 +146,20 @@ export default function PendingCutsTable() {
         </div>
       )}
 
-      <div className="rounded-xl overflow-hidden ring-1 ring-white/10">
-        <table className="w-full text-sm">
+      {/* SCROLL HORIZONTAL + colgroup com larguras base */}
+      <div className="rounded-xl overflow-x-auto ring-1 ring-white/10">
+        <table className="w-full text-sm table-auto">
+          <colgroup>
+            <col className="w-28" />  {/* matrícula */}
+            <col className="w-48" />  {/* bairro */}
+            <col className="w-[340px]" /> {/* rua e nº */}
+            <col className="w-[320px]" /> {/* ponto ref */}
+            <col className="w-56" />  {/* status/marcar */}
+            <col className="w-28" />  {/* pdf */}
+            <col className="w-40" />  {/* criado em */}
+            <col className="w-36" />  {/* corte na rua */}
+          </colgroup>
+
           <thead className="bg-white/5 text-slate-300">
             <tr>
               <th className="text-left font-medium py-2 px-3">Matrícula</th>
@@ -163,30 +172,48 @@ export default function PendingCutsTable() {
               <th className="text-center font-medium py-2 px-3">Corte na rua?</th>
             </tr>
           </thead>
+
           <tbody className="divide-y divide-white/10">
             {rows.map((r) => (
-              <tr key={r.id} className="bg-slate-950/40">
-                <td className="py-2 px-3 font-mono">{r.matricula}</td>
-                <td className="py-2 px-3">{r.bairro}</td>
+              <tr key={r.id} className="bg-slate-950/40 align-middle">
+                <td className="py-2 px-3 font-mono whitespace-nowrap">{r.matricula}</td>
+
                 <td className="py-2 px-3">
-                  {r.rua}, {r.numero}
+                  <div className="truncate max-w-[180px]" title={r.bairro}>
+                    {r.bairro}
+                  </div>
                 </td>
-                <td className="py-2 px-3">{r.ponto_referencia || "-"}</td>
-                <td className="py-2 px-3 text-center">
+
+                <td className="py-2 px-3">
+                  <div className="truncate max-w-[300px]" title={`${r.rua}, ${r.numero}`}>
+                    {r.rua}, {r.numero}
+                  </div>
+                </td>
+
+                <td className="py-2 px-3">
+                  <div className="truncate max-w-[280px]" title={r.ponto_referencia || "-"}>
+                    {r.ponto_referencia || "-"}
+                  </div>
+                </td>
+
+                <td className="py-2 px-3 text-center whitespace-nowrap">
                   <div className="inline-flex items-center gap-2">
-                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-amber-500/20 text-amber-300 ring-1 ring-amber-400/30">
+                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-amber-500/20 text-amber-300 ring-1 ring-amber-400/30 whitespace-nowrap">
                       Aguardando Corte
                     </span>
                     <button
                       onClick={() => marcarCortada(r.id)}
-                      className="px-3 py-1.5 text-xs rounded-lg bg-rose-500/20 text-rose-200 ring-1 ring-rose-400/40 hover:bg-rose-500/30"
+                      className="px-3 py-1.5 text-xs rounded-lg bg-rose-500/20 text-rose-200 ring-1 ring-rose-400/40 hover:bg-rose-500/30 whitespace-nowrap"
                     >
                       Cortar
                     </button>
                   </div>
                 </td>
+
                 <td className="py-2 px-3 text-center">{renderImprimirCell(r)}</td>
-                <td className="py-2 px-3 text-center">{fmt(r.created_at)}</td>
+
+                <td className="py-2 px-3 text-center whitespace-nowrap">{fmt(r.created_at)}</td>
+
                 <td className="py-2 px-3 text-center">{renderCorteNaRua(r.corte_na_rua)}</td>
               </tr>
             ))}

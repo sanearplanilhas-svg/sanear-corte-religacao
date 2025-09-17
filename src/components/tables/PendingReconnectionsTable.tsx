@@ -13,11 +13,12 @@ type PendRow = {
   status: string;
   pdf_ordem_path: string | null;
   created_at: string;
-  precisa_troca_hidrometro: boolean | null; // “Trocar Hidômetro?”
-  observacao: string | null;                 // usado nos modais
+  precisa_troca_hidrometro: boolean | null;
+  observacao: string | null;
+  telefone: string | null;
 };
 
-// normalização simples
+// normalização
 const norm = (s?: string | null) =>
   (s ?? "")
     .toLowerCase()
@@ -31,48 +32,66 @@ function StatusBadge({ status }: { status: string }) {
   const s = norm(status);
   let cls = "bg-slate-500/20 text-slate-300 ring-slate-400/30";
   let label = status;
-
   if (s === "aguardando religacao" || s.startsWith("aguardando")) {
     cls = "bg-amber-500/20 text-amber-300 ring-amber-400/30";
-    label = "Aguardando Religação"; // 🔹 capitalizado
+    label = "Aguardando Religação";
   } else if (s === "ativa" || s === "ativo") {
     cls = "bg-emerald-500/20 text-emerald-300 ring-emerald-400/30";
     label = "Ativa";
   }
-  return <span className={`px-2 py-0.5 text-xs rounded-full ring-1 ${cls}`}>{label}</span>;
+  return <span className={`px-2 py-0.5 text-xs rounded-full ring-1 ${cls} whitespace-nowrap`}>{label}</span>;
 }
 
 function HidrometroBadge({ value }: { value: boolean | null }) {
   if (value === true) {
     return (
-      <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-emerald-600/20 text-emerald-200 ring-emerald-400/40">
+      <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-emerald-600/20 text-emerald-200 ring-emerald-400/40 whitespace-nowrap">
         SIM
       </span>
     );
   }
   if (value === false) {
     return (
-      <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-rose-600/20 text-rose-200 ring-rose-400/40">
+      <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-rose-600/20 text-rose-200 ring-rose-400/40 whitespace-nowrap">
         NÃO
       </span>
     );
   }
-  return <span className="text-slate-400 text-xs">—</span>;
+  return <span className="text-slate-400 text-xs whitespace-nowrap">—</span>;
 }
+
+// -------- helper para abrir a página /overlay-print ----------
+function openOverlayPrint(pdfUrl: string, telefone?: string | null, referencia?: string | null) {
+  const isHashRouter = window.location.hash.startsWith("#/");
+
+  let base: string;
+  if (isHashRouter) {
+    base = `${window.location.origin}${window.location.pathname}#/overlay-print`;
+  } else {
+    const path = window.location.pathname.endsWith("/")
+      ? window.location.pathname
+      : window.location.pathname + "/";
+    base = `${window.location.origin}${path}overlay-print`;
+  }
+
+  const url = new URL(base);
+  url.searchParams.set("url", pdfUrl);
+  if (telefone && telefone.trim()) url.searchParams.set("telefone", telefone.trim());
+  if (referencia && referencia.trim()) url.searchParams.set("referencia", referencia.trim());
+
+  window.open(url.toString(), "_blank", "noopener,noreferrer");
+}
+// -----------------------------------------------------------------
 
 export default function PendingReconnectionsTable() {
   const [rows, setRows] = React.useState<PendRow[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [msg, setMsg] = React.useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
-  const [filter, setFilter] = React.useState<ListFilter>({
-    q: "",
-    startDate: null,
-    endDate: null,
-  });
+  const [filter, setFilter] = React.useState<ListFilter>({ q: "", startDate: null, endDate: null });
 
-  const fmtDateTime = (iso: string | null) =>
-    iso ? new Date(iso).toLocaleString("pt-BR") : "—";
+  const fmtDateTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR") : "—");
+  const fmtTel = (t?: string | null) => (t && t.trim() ? t : "—");
 
   // ====== MODAIS ======
   const [modalAtivarSim, setModalAtivarSim] = React.useState<{
@@ -97,6 +116,8 @@ export default function PendingReconnectionsTable() {
     matricula?: string;
     observacao?: string | null;
     pdfUrl?: string | null;
+    telefone?: string | null;
+    pontoRef?: string | null;
   }>({ open: false });
 
   // ====== CARREGAR LISTA ======
@@ -120,13 +141,16 @@ export default function PendingReconnectionsTable() {
             "created_at",
             "precisa_troca_hidrometro",
             "observacao",
+            "telefone",
           ].join(", ")
         )
         .eq("status", "aguardando_religacao");
 
       if (filter.q.trim() !== "") {
         const q = filter.q.trim();
-        query = query.or(`matricula.ilike.%${q}%,bairro.ilike.%${q}%,rua.ilike.%${q}%`);
+        query = query.or(
+          `matricula.ilike.%${q}%,bairro.ilike.%${q}%,rua.ilike.%${q}%,telefone.ilike.%${q}%`
+        );
       }
 
       if (filter.startDate) query = query.gte("created_at", `${filter.startDate}T00:00:00`);
@@ -136,11 +160,8 @@ export default function PendingReconnectionsTable() {
 
       const { data, error } = await query;
 
-      if (error) {
-        setMsg({ kind: "err", text: error.message });
-      } else {
-        setRows(((data ?? []) as unknown) as PendRow[]);
-      }
+      if (error) setMsg({ kind: "err", text: error.message });
+      else setRows(((data ?? []) as unknown) as PendRow[]);
     } finally {
       setLoading(false);
     }
@@ -155,32 +176,26 @@ export default function PendingReconnectionsTable() {
     setFilter({ q: "", startDate: null, endDate: null });
   }
 
-  // ====== IMPRESSÃO (com modal de observação) ======
+  // ====== IMPRESSÃO (abre overlay-print) ======
   function renderImprimirCell(row: PendRow) {
     if (!row.pdf_ordem_path) return "—";
     const { data } = supabase.storage.from("ordens-pdfs").getPublicUrl(row.pdf_ordem_path);
-    const url = data?.publicUrl || null;
+    const pdfUrl = data?.publicUrl || null;
+    if (!pdfUrl) return <span className="text-slate-400 text-xs">Sem link</span>;
 
     return (
       <button
         type="button"
-        onClick={() =>
-          setModalImprimir({
-            open: true,
-            matricula: row.matricula,
-            observacao: row.observacao,
-            pdfUrl: url,
-          })
-        }
-        className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30"
-        title="Imprimir PDF"
+        onClick={() => openOverlayPrint(pdfUrl, row.telefone || "", row.ponto_referencia || "")}
+        className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30 whitespace-nowrap"
+        title="Imprimir PDF com sobreposição"
       >
         Imprimir
       </button>
     );
   }
 
-  // ====== FLUXO ATIVAR ======
+  // ====== FLUXO ATIVAR (igual ao seu) ======
   function onClickAtivar(row: PendRow) {
     if (row.precisa_troca_hidrometro === true) {
       setModalAtivarSim({
@@ -291,14 +306,29 @@ export default function PendingReconnectionsTable() {
         </div>
       )}
 
-      <div className="rounded-xl overflow-hidden ring-1 ring-white/10">
-        <table className="w-full text-sm">
+      {/* SCROLL HORIZONTAL + colgroup com larguras base */}
+      <div className="rounded-xl overflow-x-auto ring-1 ring-white/10">
+        <table className="w-full text-sm table-auto">
+          <colgroup>
+            <col className="w-28" />
+            <col className="w-40" />
+            <col className="w-[320px]" />
+            <col className="w-[300px]" />
+            <col className="w-40" />
+            <col className="w-28" />
+            <col className="w-56" />
+            <col className="w-28" />
+            <col className="w-40" />
+            <col className="w-40" />
+          </colgroup>
+
           <thead className="bg-white/5 text-slate-300">
             <tr>
               <th className="text-left font-medium py-2 px-3">Matrícula</th>
               <th className="text-left font-medium py-2 px-3">Bairro</th>
               <th className="text-left font-medium py-2 px-3">Rua e nº</th>
               <th className="text-left font-medium py-2 px-3">Ponto ref.</th>
+              <th className="text-left font-medium py-2 px-3">Telefone</th>
               <th className="text-left font-medium py-2 px-3">Prioridade</th>
               <th className="text-center font-medium py-2 px-3">Status / Marcar</th>
               <th className="text-center font-medium py-2 px-3">Ordem (PDF)</th>
@@ -306,40 +336,59 @@ export default function PendingReconnectionsTable() {
               <th className="text-center font-medium py-2 px-3">Trocar Hidômetro?</th>
             </tr>
           </thead>
+
           <tbody className="divide-y divide-white/10">
             {rows.map((r) => (
-              <tr key={r.id} className="bg-slate-950/40">
-                <td className="py-2 px-3 font-mono">{r.matricula}</td>
-                <td className="py-2 px-3">{r.bairro}</td>
+              <tr key={r.id} className="bg-slate-950/40 align-middle">
+                <td className="py-2 px-3 font-mono whitespace-nowrap">{r.matricula}</td>
+
                 <td className="py-2 px-3">
-                  {r.rua}, {r.numero}
+                  <div className="truncate max-w-[160px]" title={r.bairro}>
+                    {r.bairro}
+                  </div>
                 </td>
-                <td className="py-2 px-3">{r.ponto_referencia || "-"}</td>
+
+                <td className="py-2 px-3">
+                  <div className="truncate max-w-[280px]" title={`${r.rua}, ${r.numero}`}>
+                    {r.rua}, {r.numero}
+                  </div>
+                </td>
+
+                <td className="py-2 px-3">
+                  <div className="truncate max-w-[260px]" title={r.ponto_referencia || "-"}>
+                    {r.ponto_referencia || "-"}
+                  </div>
+                </td>
+
+                <td className="py-2 px-3 whitespace-nowrap">{fmtTel(r.telefone)}</td>
+
                 <td className="py-2 px-3">
                   {r.prioridade ? (
-                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-fuchsia-500/20 text-fuchsia-300 ring-1 ring-fuchsia-400/30">
+                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-fuchsia-500/20 text-fuchsia-300 ring-1 ring-fuchsia-400/30 whitespace-nowrap">
                       PRIORIDADE
                     </span>
                   ) : (
-                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-slate-500/20 text-slate-300 ring-1 ring-slate-400/30">
-                      Normal {/* 🔹 capitalizado */}
+                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-slate-500/20 text-slate-300 ring-1 ring-slate-400/30 whitespace-nowrap">
+                      Normal
                     </span>
                   )}
                 </td>
-                <td className="py-2 px-3 text-center">
+
+                <td className="py-2 px-3 text-center whitespace-nowrap">
                   <div className="inline-flex items-center gap-2">
                     <StatusBadge status={r.status} />
                     <button
                       onClick={() => onClickAtivar(r)}
-                      className="px-3 py-1.5 text-xs rounded-lg bg-emerald-600/20 text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-600/30"
+                      className="px-3 py-1.5 text-xs rounded-lg bg-emerald-600/20 text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-600/30 whitespace-nowrap"
                       title="Marcar como ATIVA"
                     >
                       Ativar
                     </button>
                   </div>
                 </td>
+
                 <td className="py-2 px-3 text-center">{renderImprimirCell(r)}</td>
-                <td className="py-2 px-3 text-center">{fmtDateTime(r.created_at)}</td>
+                <td className="py-2 px-3 text-center whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
                 <td className="py-2 px-3 text-center">
                   <HidrometroBadge value={r.precisa_troca_hidrometro} />
                 </td>
@@ -348,7 +397,7 @@ export default function PendingReconnectionsTable() {
 
             {rows.length === 0 && (
               <tr>
-                <td colSpan={9} className="py-6 text-center text-slate-400">
+                <td colSpan={10} className="py-6 text-center text-slate-400">
                   Nenhuma papeleta pendente.
                 </td>
               </tr>
@@ -357,7 +406,7 @@ export default function PendingReconnectionsTable() {
         </table>
       </div>
 
-      {/* ===== Modal: Ativar (Troca SIM) ===== */}
+      {/* ===== Modais (iguais aos seus) ===== */}
       {modalAtivarSim.open && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-md">
@@ -366,17 +415,13 @@ export default function PendingReconnectionsTable() {
             </h3>
             <div className="text-slate-300 text-sm mb-3">
               <div className="font-semibold mb-1">OBSERVAÇÃO:</div>
-              <div className="whitespace-pre-wrap">
-                {modalAtivarSim.observacao ? modalAtivarSim.observacao : "—"}
-              </div>
+              <div className="whitespace-pre-wrap">{modalAtivarSim.observacao ? modalAtivarSim.observacao : "—"}</div>
             </div>
 
             <label className="block text-sm text-slate-300 mb-1">NOVO NÚMERO DO HIDRÔMETRO</label>
             <input
               value={modalAtivarSim.novoNumero ?? ""}
-              onChange={(e) =>
-                setModalAtivarSim((m) => ({ ...m, novoNumero: e.target.value.toUpperCase() }))
-              }
+              onChange={(e) => setModalAtivarSim((m) => ({ ...m, novoNumero: e.target.value.toUpperCase() }))}
               className="w-full rounded-xl bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 text-white"
               placeholder="DIGITE AQUI…"
               autoFocus
@@ -402,21 +447,16 @@ export default function PendingReconnectionsTable() {
         </div>
       )}
 
-      {/* ===== Modal: Ativar (Troca NÃO) ===== */}
       {modalAtivarNao.open && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-md">
             <h3 className="text-lg font-semibold text-white mb-3">
               Ativar matrícula {modalAtivarNao.matricula}
             </h3>
-            <p className="text-slate-300 text-sm">
-              Não é necessário anexar novo hidrômetro para esta ordem.
-            </p>
+            <p className="text-slate-300 text-sm">Não é necessário anexar novo hidrômetro para esta ordem.</p>
             <div className="text-slate-300 text-sm mt-3">
               <div className="font-semibold mb-1">OBSERVAÇÃO:</div>
-              <div className="whitespace-pre-wrap">
-                {modalAtivarNao.observacao ? modalAtivarNao.observacao : "—"}
-              </div>
+              <div className="whitespace-pre-wrap">{modalAtivarNao.observacao ? modalAtivarNao.observacao : "—"}</div>
             </div>
 
             <div className="mt-5 flex justify-end gap-3">
@@ -439,7 +479,6 @@ export default function PendingReconnectionsTable() {
         </div>
       )}
 
-      {/* ===== Modal: Observação antes de Imprimir ===== */}
       {modalImprimir.open && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-md text-center">
@@ -458,14 +497,16 @@ export default function PendingReconnectionsTable() {
               </button>
               <button
                 onClick={() => {
-                  const url = modalImprimir.pdfUrl;
+                  const url = modalImprimir.pdfUrl || "";
+                  const tel = modalImprimir.telefone || "";
+                  const refe = modalImprimir.pontoRef || "";
                   setModalImprimir({ open: false });
-                  if (url) window.open(url, "_blank", "noopener,noreferrer");
+                  if (url) openOverlayPrint(url, tel, refe);
                 }}
                 className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-60"
                 disabled={!modalImprimir.pdfUrl}
               >
-                OK, entendi
+                Imprimir com sobreposição
               </button>
             </div>
           </div>

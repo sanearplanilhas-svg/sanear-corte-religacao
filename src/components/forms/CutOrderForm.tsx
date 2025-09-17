@@ -184,6 +184,7 @@ export default function CutOrderForm() {
 
   return (
     <div className="rounded-2xl bg-slate-900/50 ring-1 ring-white/10 p-6 relative">
+      {/* Cabeçalho */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold">Nova ordem de corte</h2>
@@ -192,139 +193,162 @@ export default function CutOrderForm() {
         <div className="text-xs text-emerald-300 font-semibold">{now}</div>
       </div>
 
-      <form onSubmit={onSave} className="mt-6 space-y-6">
-        {/* Matrícula e OS */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm text-slate-300 mb-1">Matrícula *</label>
-            <input
-              className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-              placeholder="Ex.: 00000"
-              value={matricula}
-              onChange={handleMatricula}
-              onBlur={() => {
-                const m = formatMatricula();
-                fetchMatriculaData(m);
-              }}
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-slate-300 mb-1">OS *</label>
-            <input
-              className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-              placeholder="Ex.: 123456"
-              value={os}
-              onChange={handleOs}
-              onBlur={validateOs}
-            />
-          </div>
-        </div>
+      {/* Form com seções/hi–erarquia visual */}
+      <form onSubmit={onSave} className="mt-6">
+        <div className="space-y-8 divide-y divide-white/10">
+          {/* Seção 1: Identificação */}
+          <section className="space-y-4">
+            <h3 className="text-sm font-semibold text-slate-300">Identificação</h3>
 
-        {/* Endereço */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm text-slate-300 mb-1">Bairro *</label>
-            <input
-              className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-              placeholder="Ex.: CENTRO"
-              value={bairro}
-              onChange={(e) => setBairro(e.target.value.toUpperCase())}
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-slate-300 mb-1">Rua *</label>
-            <input
-              className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-              placeholder="Ex.: RUA DAS FLORES"
-              value={rua}
-              onChange={(e) => setRua(e.target.value.toUpperCase())}
-            />
-          </div>
-        </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Matrícula *</label>
+                <input
+                  className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                  placeholder="EX.: 00000"
+                  value={matricula}
+                  onChange={handleMatricula}
+                  onBlur={() => {
+                    const m = formatMatricula();
+                    fetchMatriculaData(m);
+                  }}
+                  inputMode="numeric"
+                  maxLength={5}
+                />
+              </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm text-slate-300 mb-1">Número *</label>
-            <input
-              className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-              placeholder="Ex.: 123"
-              value={numero}
-              onChange={(e) => setNumero(e.target.value.toUpperCase())}
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-slate-300 mb-1">Ponto de referência *</label>
-            <input
-              className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-              placeholder="Ex.: PRÓXIMO À PRAÇA…"
-              value={pontoRef}
-              onChange={(e) => setPontoRef(e.target.value.toUpperCase())}
-            />
-          </div>
-        </div>
-
-        {/* Motivo */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm text-slate-300 mb-1">Motivo do corte *</label>
-            <select
-              className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-              value={motivo}
-              onChange={(e) => setMotivo(e.target.value as any)}
-            >
-              <option value="">Selecione</option>
-              <option value="faturas">Falta de pagamento de faturas</option>
-              <option value="agendamento">Agendamento não cumprido</option>
-              <option value="outros">Outros</option>
-            </select>
-          </div>
-
-          {motivo === "outros" && (
-            <div>
-              <label className="block text-sm text-slate-300 mb-1">Descreva o motivo</label>
-              <input
-                className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-                placeholder="Ex.: IMÓVEL FECHADO POR 3 VISITAS…"
-                value={motivoOutros}
-                onChange={(e) => setMotivoOutros(e.target.value.toUpperCase())}
-              />
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">OS *</label>
+                <input
+                  className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                  placeholder="EX.: 123456"
+                  value={os}
+                  onChange={handleOs}
+                  onBlur={validateOs}
+                  inputMode="numeric"
+                  maxLength={6}
+                />
+              </div>
             </div>
-          )}
-        </div>
+          </section>
 
-        {/* Upload PDF */}
-        <div>
-          <label className="block text-sm text-slate-300 mb-2">Anexar PDF da ordem de corte *</label>
-          <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30 cursor-pointer">
-            <input
-              type="file"
-              accept="application/pdf"
-              className="hidden"
-              onChange={(e) => setPdfOrdem(e.target.files?.[0] || null)}
-            />
-            Selecionar PDF
-          </label>
-          <span className="ml-3 text-xs text-slate-400">
-            {pdfOrdem ? pdfOrdem.name : "Nenhum arquivo selecionado"}
-          </span>
-        </div>
+          {/* Seção 2: Endereço */}
+          <section className="pt-8 space-y-4">
+            <h3 className="text-sm font-semibold text-slate-300">Endereço</h3>
 
-        {/* Ações */}
-        <div className="flex items-center gap-3 pt-2">
-          <button
-            type="submit"
-            disabled={saving}
-            className="px-4 py-2 rounded-lg bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-500/30 disabled:opacity-50"
-          >
-            {saving ? "Salvando…" : "Salvar"}
-          </button>
-          <button
-            type="button"
-            onClick={clear}
-            className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10"
-          >
-            Limpar
-          </button>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Bairro *</label>
+                <input
+                  className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                  placeholder="EX.: CENTRO"
+                  value={bairro}
+                  onChange={(e) => setBairro(e.target.value.toUpperCase())}
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Rua *</label>
+                <input
+                  className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                  placeholder="EX.: RUA DAS FLORES"
+                  value={rua}
+                  onChange={(e) => setRua(e.target.value.toUpperCase())}
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Número *</label>
+                <input
+                  className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                  placeholder="EX.: 123"
+                  value={numero}
+                  onChange={(e) => setNumero(e.target.value.toUpperCase())}
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Ponto de referência *</label>
+                <input
+                  className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                  placeholder="EX.: PRÓXIMO À PRAÇA…"
+                  value={pontoRef}
+                  onChange={(e) => setPontoRef(e.target.value.toUpperCase())}
+                />
+              </div>
+            </div>
+          </section>
+
+          {/* Seção 3: Motivo */}
+          <section className="pt-8 space-y-4">
+            <h3 className="text-sm font-semibold text-slate-300">Motivo</h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Motivo do corte *</label>
+                <select
+                  className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                  value={motivo}
+                  onChange={(e) => setMotivo(e.target.value as any)}
+                >
+                  <option value="">SELECIONE</option>
+                  <option value="faturas">FALTA DE PAGAMENTO DE FATURAS</option>
+                  <option value="agendamento">AGENDAMENTO NÃO CUMPRIDO</option>
+                  <option value="outros">OUTROS</option>
+                </select>
+              </div>
+
+              {motivo === "outros" && (
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1">Descreva o motivo</label>
+                  <input
+                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                    placeholder="EX.: IMÓVEL FECHADO POR 3 VISITAS…"
+                    value={motivoOutros}
+                    onChange={(e) => setMotivoOutros(e.target.value.toUpperCase())}
+                  />
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* Seção 4: Anexos */}
+          <section className="pt-8 space-y-4">
+            <h3 className="text-sm font-semibold text-slate-300">Anexos</h3>
+
+            <div>
+              <label className="block text-sm text-slate-300 mb-2">Anexar PDF da ordem de corte *</label>
+              <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30 cursor-pointer">
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  className="hidden"
+                  onChange={(e) => setPdfOrdem(e.target.files?.[0] || null)}
+                />
+                Selecionar PDF
+              </label>
+              <span className="ml-3 text-xs text-slate-400">
+                {pdfOrdem ? pdfOrdem.name : "Nenhum arquivo selecionado"}
+              </span>
+            </div>
+          </section>
+
+          {/* Ações */}
+          <section className="pt-8">
+            <div className="flex items-center gap-3">
+              <button
+                type="submit"
+                disabled={saving}
+                className="px-4 py-2 rounded-lg bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-500/30 disabled:opacity-50"
+              >
+                {saving ? "Salvando…" : "Salvar"}
+              </button>
+              <button
+                type="button"
+                onClick={clear}
+                className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10"
+              >
+                Limpar
+              </button>
+            </div>
+          </section>
         </div>
       </form>
 

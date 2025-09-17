@@ -20,9 +20,11 @@ export default function ReconnectionOrderForm() {
 
   // util
   const toUpper = (s: string) => (s ?? "").toUpperCase();
+  const onlyDigits = (s: string) => (s ?? "").replace(/\D/g, "");
 
   // estado — papeleta
   const [matricula, setMatricula] = React.useState("");
+  const [telefone, setTelefone] = React.useState(""); // <<<<<< NOVO
   const [bairro, setBairro] = React.useState("");
   const [rua, setRua] = React.useState("");
   const [numero, setNumero] = React.useState("");
@@ -107,6 +109,7 @@ export default function ReconnectionOrderForm() {
 
   function clear() {
     setMatricula("");
+    setTelefone(""); // <<<<<< NOVO
     setBairro("");
     setRua("");
     setNumero("");
@@ -135,13 +138,66 @@ export default function ReconnectionOrderForm() {
     return matricula;
   };
 
-  // buscar dados de matrícula
+  // telefone — helpers
+  const formatTelefonePretty = (digits: string) => {
+    // digits pode ser ddd+numero (10 ou 11) — prioriza DDD que vier
+    let d = digits;
+    if (d.startsWith("55")) d = d.slice(2); // remove country se veio sem espaços
+    let ddd = d.slice(0, 2);
+    let rest = d.slice(2);
+
+    // Se não tiver DDD (8 ou 9 dígitos), força 27
+    if (d.length === 8 || d.length === 9) {
+      ddd = "27";
+      rest = d;
+    }
+
+    // Monta máscara
+    if (rest.length === 9) {
+      return `+55 ${ddd} ${rest.slice(0, 5)}-${rest.slice(5)}`;
+    }
+    if (rest.length === 8) {
+      return `+55 ${ddd} ${rest.slice(0, 4)}-${rest.slice(4)}`;
+    }
+    // fallback sem traço
+    return `+55 ${ddd} ${rest}`;
+  };
+
+  const handleTelefoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setTelefone(e.target.value);
+  };
+
+  const handleTelefoneBlur = () => {
+    const d = onlyDigits(telefone);
+    if (!d) return;
+
+    // Regra do usuário:
+    // - só número (8/9 dígitos) => completa com +55 27
+    // - se digitar com DDD 27 => completa com +55
+    // - se digitar com outro DDD, só adiciona +55 (não troca o DDD do usuário)
+    let out = d;
+
+    if (d.length === 8 || d.length === 9) {
+      // sem DDD -> usa 27
+      out = `27${d}`;
+    } else if (d.length === 10 || d.length === 11) {
+      // já tem DDD; mantém
+      out = d;
+    } else if (d.length > 11 && d.startsWith("55")) {
+      // veio com 55 no começo, remove pra normalizar
+      out = d.slice(2);
+    }
+
+    setTelefone(formatTelefonePretty(out));
+  };
+
+  // buscar dados de matrícula (inclui telefone, se existir)
   async function fetchMatriculaData(m: string) {
     if (!m) return;
 
     let { data, error } = await supabase
       .from("ordens_religacao")
-      .select("bairro, rua, numero, ponto_referencia")
+      .select("bairro, rua, numero, ponto_referencia, telefone")
       .eq("matricula", m)
       .order("created_at", { ascending: false })
       .limit(1);
@@ -152,13 +208,14 @@ export default function ReconnectionOrderForm() {
       setRua(d?.rua ?? "");
       setNumero(d?.numero ?? "");
       setPontoRef(d?.ponto_referencia ?? "");
+      if (d?.telefone) setTelefone(d.telefone);
       setPrioridade(false);
       return;
     }
 
     let { data: dataCorte, error: errorCorte } = await supabase
       .from("ordens_corte")
-      .select("bairro, rua, numero, ponto_referencia")
+      .select("bairro, rua, numero, ponto_referencia, telefone")
       .eq("matricula", m)
       .order("created_at", { ascending: false })
       .limit(1);
@@ -169,12 +226,14 @@ export default function ReconnectionOrderForm() {
       setRua(d?.rua ?? "");
       setNumero(d?.numero ?? "");
       setPontoRef(d?.ponto_referencia ?? "");
+      if (d?.telefone) setTelefone(d.telefone);
       setPrioridade(false);
     }
   }
 
   function validatePapeleta(): string | null {
     if (!matricula.trim()) return "Informe a matrícula.";
+    if (!telefone.trim()) return "Informe o telefone de contato.";
     if (!bairro.trim()) return "Informe o bairro.";
     if (!rua.trim()) return "Informe a rua.";
     if (!numero.trim()) return "Informe o número.";
@@ -225,6 +284,7 @@ export default function ReconnectionOrderForm() {
       const { error: insErr } = await supabase.from("ordens_religacao").insert({
         id,
         matricula: matricula.trim(),
+        telefone: telefone.trim(), // <<<<<< NOVO
         bairro: bairro.trim(),
         rua: rua.trim(),
         numero: numero.trim(),
@@ -356,6 +416,7 @@ export default function ReconnectionOrderForm() {
 
   return (
     <div className="rounded-2xl bg-slate-900/50 ring-1 ring-white/10 p-6 relative">
+      {/* Cabeçalho */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold">Religação</h2>
@@ -364,7 +425,7 @@ export default function ReconnectionOrderForm() {
         <div className="text-xs text-emerald-300 font-semibold">{now}</div>
       </div>
 
-      {/* abas */}
+      {/* Abas */}
       <div className="mt-5 flex gap-2">
         <button
           onClick={() => setSubTab("PAPELETA")}
@@ -387,178 +448,231 @@ export default function ReconnectionOrderForm() {
       </div>
 
       {subTab === "PAPELETA" ? (
-        <form onSubmit={onSave} className="mt-6 space-y-6">
-          {/* matrícula e prioridade */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm text-slate-300 mb-1">Matrícula *</label>
-              <input
-                className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-                placeholder="Ex.: 00000"
-                value={matricula}
-                onChange={handleMatricula}
-                onBlur={() => {
-                  const m = formatMatricula();
-                  if (m) fetchMatriculaData(m);
-                }}
-                inputMode="numeric"
-                maxLength={5}
-              />
-            </div>
+        <form onSubmit={onSave} className="mt-6">
+          {/* Seções com divisórias para dar hierarquia */}
+          <div className="space-y-8 divide-y divide-white/10">
+            {/* Seção 1: Identificação */}
+            <section className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-300">Identificação</h3>
+              </div>
 
-            <div className="flex items-center gap-3">
-              <div className="flex-1">
-                <label className="block text-sm text-slate-300 mb-1">Prioridade</label>
-                <div
-                  onClick={handleClickPrioridade}
-                  className={`w-full cursor-pointer rounded-xl px-3 py-2 border transition select-none
-                    ${
-                      prioridade
-                        ? "bg-fuchsia-500/15 border-fuchsia-400/30 text-fuchsia-200"
-                        : "bg-slate-950/60 border-white/10 text-slate-300"
-                    }`}
-                  title={prioridade ? "Prioridade liberada pelo diretor" : "Clique para solicitar Prioridade do Diretor"}
-                >
-                  {prioridade ? "PRIORIDADE (liberada pelo diretor)" : "Normal"}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Coluna esquerda: matrícula + telefone (mesmo tamanho dos demais) */}
+                <div className="grid grid-cols-1 gap-4">
+                  {/* Matrícula */}
+                  <div>
+                    <label className="block text-sm text-slate-300 mb-1">Matrícula *</label>
+                    <input
+                      className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                      placeholder="EX.: 00000"
+                      value={matricula}
+                      onChange={handleMatricula}
+                      onBlur={() => {
+                        const m = formatMatricula();
+                        if (m) fetchMatriculaData(m);
+                      }}
+                      inputMode="numeric"
+                      maxLength={5}
+                    />
+                  </div>
+
+                  {/* Telefone */}
+                  <div>
+                    <label className="block text-sm text-slate-300 mb-1">Telefone de contato *</label>
+                    <input
+                      className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40"
+                      placeholder="+55 27 00000-0000"
+                      value={telefone}
+                      onChange={handleTelefoneChange}
+                      onBlur={handleTelefoneBlur}
+                      inputMode="tel"
+                      autoComplete="tel"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">
+                      Dica: pode digitar só o número (ex.: <b>999999999</b>) que eu completo com <b>+55 27</b>.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Coluna direita: Prioridade (card) */}
+                <div className="rounded-xl bg-slate-950/60 border border-white/10 p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-slate-300">Prioridade</span>
+                    <span
+                      className={`text-[11px] px-2 py-1 rounded ${
+                        prioridade ? "bg-fuchsia-600/30 text-fuchsia-200" : "bg-slate-700/40 text-slate-300"
+                      }`}
+                      title={prioridade ? "Prioridade liberada pelo diretor" : "Normal"}
+                    >
+                      {prioridade ? "Liberada" : "Normal"}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleClickPrioridade}
+                    className="mt-2 w-full px-3 py-2 rounded-lg bg-fuchsia-600/20 text-fuchsia-200 hover:bg-fuchsia-600/30 transition"
+                  >
+                    {prioridade ? "Prioridade do Diretor Ativada" : "Solicitar Prioridade do Diretor"}
+                  </button>
+
+                  <p className="mt-2 text-[12px] leading-snug text-slate-400">
+                    Use somente em casos excepcionais, com autorização do Diretor.
+                  </p>
                 </div>
               </div>
-            </div>
-          </div>
+            </section>
 
-          {/* endereço */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm text-slate-300 mb-1">Bairro *</label>
-              <input
-                className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-                placeholder="Ex.: CENTRO"
-                value={bairro}
-                onChange={(e) => setBairro(toUpper(e.target.value))}
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-slate-300 mb-1">Rua *</label>
-              <input
-                className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-                placeholder="Ex.: AV. BRASIL"
-                value={rua}
-                onChange={(e) => setRua(toUpper(e.target.value))}
-              />
-            </div>
-          </div>
+            {/* Seção 2: Endereço */}
+            <section className="pt-8 space-y-4">
+              <h3 className="text-sm font-semibold text-slate-300">Endereço</h3>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm text-slate-300 mb-1">Número *</label>
-              <input
-                className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-                placeholder="Ex.: 123"
-                value={numero}
-                onChange={(e) => setNumero(toUpper(e.target.value))}
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-slate-300 mb-1">Ponto de referência *</label>
-              <input
-                className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-                placeholder="Ex.: PRÓX. AO POSTO X"
-                value={pontoRef}
-                onChange={(e) => setPontoRef(toUpper(e.target.value))}
-              />
-            </div>
-          </div>
-
-          {/* observações */}
-          <div className="space-y-2">
-            <label className="block text-sm text-slate-300 mb-1">OBSERVAÇÕES</label>
-            <select
-              className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-              value={observacaoOpt}
-              onChange={(e) => setObservacaoOpt((e.target.value || "").toUpperCase() as ObsOpt)}
-            >
-              <option value="">SELECIONE...</option>
-              <option value="SEM HIDROMETRO NO LOCAL">SEM HIDROMETRO NO LOCAL</option>
-              <option value="HIDROMETRO VAZANDO">HIDROMETRO VAZANDO</option>
-              <option value="OUTROS">OUTROS</option>
-            </select>
-
-            {observacaoOpt === "OUTROS" && (
-              <div className="mt-2">
-                <label className="block text-sm text-slate-400">DESCREVA (MAIÚSCULO)</label>
-                <input
-                  type="text"
-                  className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-                  placeholder="DIGITE AQUI..."
-                  value={observacaoOutros}
-                  onChange={(e) => setObservacaoOutros(toUpper(e.target.value))}
-                  onPaste={(e: React.ClipboardEvent<HTMLInputElement>) => {
-                    e.preventDefault();
-                    const text = e.clipboardData?.getData("text") ?? "";
-                    setObservacaoOutros(toUpper(text));
-                  }}
-                  autoCapitalize="characters"
-                  autoCorrect="off"
-                />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1">Bairro *</label>
+                  <input
+                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                    placeholder="EX.: CENTRO"
+                    value={bairro}
+                    onChange={(e) => setBairro(toUpper(e.target.value))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1">Rua *</label>
+                  <input
+                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                    placeholder="EX.: AV. BRASIL"
+                    value={rua}
+                    onChange={(e) => setRua(toUpper(e.target.value))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1">Número *</label>
+                  <input
+                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                    placeholder="EX.: 123"
+                    value={numero}
+                    onChange={(e) => setNumero(toUpper(e.target.value))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1">Ponto de referência *</label>
+                  <input
+                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                    placeholder="EX.: PRÓX. AO POSTO X"
+                    value={pontoRef}
+                    onChange={(e) => setPontoRef(toUpper(e.target.value))}
+                  />
+                </div>
               </div>
-            )}
-          </div>
+            </section>
 
-          {/* uploads */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm text-slate-300 mb-2">Anexar PDF da papeleta de Religação *</label>
-              <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30 cursor-pointer">
-                <input
-                  type="file"
-                  accept="application/pdf"
-                  className="hidden"
-                  onChange={(e) =>
-                    setPdfOrdem(e.currentTarget.files && e.currentTarget.files[0] ? e.currentTarget.files[0] : null)
-                  }
-                />
-                Selecionar PDF
-              </label>
-              <span className="ml-3 text-xs text-slate-400">
-                {pdfOrdem ? pdfOrdem.name : "Nenhum arquivo selecionado"}
-              </span>
-            </div>
-            <div>
-              <label className="block text-sm text-slate-300 mb-2">Anexar comprovante (opcional)</label>
-              <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-500/20 text-purple-200 ring-1 ring-purple-400/40 hover:bg-purple-500/30 cursor-pointer">
-                <input
-                  type="file"
-                  accept="application/pdf"
-                  className="hidden"
-                  onChange={(e) =>
-                    setPdfComprovante(
-                      e.currentTarget.files && e.currentTarget.files[0] ? e.currentTarget.files[0] : null
-                    )
-                  }
-                />
-                Selecionar PDF
-              </label>
-              <span className="ml-3 text-xs text-slate-400">
-                {pdfComprovante ? pdfComprovante.name : "Nenhum arquivo selecionado"}
-              </span>
-            </div>
-          </div>
+            {/* Seção 3: Observações (MESMO TAMANHO DOS OUTROS) */}
+            <section className="pt-8 space-y-4">
+              <h3 className="text-sm font-semibold text-slate-300">Observações</h3>
 
-          {/* ações */}
-          <div className="flex items-center gap-3 pt-2">
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-4 py-2 rounded-lg bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-500/30 disabled:opacity-50"
-            >
-              {saving ? "Salvando…" : "Salvar"}
-            </button>
-            <button
-              type="button"
-              onClick={clear}
-              className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10"
-            >
-              Limpar
-            </button>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1">Seleção</label>
+                  <select
+                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                    value={observacaoOpt}
+                    onChange={(e) => setObservacaoOpt((e.target.value || "").toUpperCase() as ObsOpt)}
+                  >
+                    <option value="">SELECIONE...</option>
+                    <option value="SEM HIDROMETRO NO LOCAL">SEM HIDROMETRO NO LOCAL</option>
+                    <option value="HIDROMETRO VAZANDO">HIDROMETRO VAZANDO</option>
+                    <option value="OUTROS">OUTROS</option>
+                  </select>
+                </div>
+
+                {observacaoOpt === "OUTROS" && (
+                  <div>
+                    <label className="block text-sm text-slate-300 mb-1">Descreva (maiúsculo)</label>
+                    <input
+                      type="text"
+                      className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                      placeholder="DIGITE AQUI..."
+                      value={observacaoOutros}
+                      onChange={(e) => setObservacaoOutros(toUpper(e.target.value))}
+                      onPaste={(e: React.ClipboardEvent<HTMLInputElement>) => {
+                        e.preventDefault();
+                        const text = e.clipboardData?.getData("text") ?? "";
+                        setObservacaoOutros(toUpper(text));
+                      }}
+                      autoCapitalize="characters"
+                      autoCorrect="off"
+                    />
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {/* Seção 4: Anexos */}
+            <section className="pt-8 space-y-4">
+              <h3 className="text-sm font-semibold text-slate-300">Anexos</h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-slate-300 mb-2">Anexar PDF da papeleta de Religação *</label>
+                  <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30 cursor-pointer">
+                    <input
+                      type="file"
+                      accept="application/pdf"
+                      className="hidden"
+                      onChange={(e) =>
+                        setPdfOrdem(e.currentTarget.files && e.currentTarget.files[0] ? e.currentTarget.files[0] : null)
+                      }
+                    />
+                    Selecionar PDF
+                  </label>
+                  <span className="ml-3 text-xs text-slate-400">
+                    {pdfOrdem ? pdfOrdem.name : "Nenhum arquivo selecionado"}
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-slate-300 mb-2">Anexar comprovante (opcional)</label>
+                  <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-500/20 text-purple-200 ring-1 ring-purple-400/40 hover:bg-purple-500/30 cursor-pointer">
+                    <input
+                      type="file"
+                      accept="application/pdf"
+                      className="hidden"
+                      onChange={(e) =>
+                        setPdfComprovante(
+                          e.currentTarget.files && e.currentTarget.files[0] ? e.currentTarget.files[0] : null
+                        )
+                      }
+                    />
+                    Selecionar PDF
+                  </label>
+                  <span className="ml-3 text-xs text-slate-400">
+                    {pdfComprovante ? pdfComprovante.name : "Nenhum arquivo selecionado"}
+                  </span>
+                </div>
+              </div>
+            </section>
+
+            {/* Ações */}
+            <section className="pt-8">
+              <div className="flex items-center gap-3">
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="px-4 py-2 rounded-lg bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-500/30 disabled:opacity-50"
+                >
+                  {saving ? "Salvando…" : "Salvar"}
+                </button>
+                <button
+                  type="button"
+                  onClick={clear}
+                  className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10"
+                >
+                  Limpar
+                </button>
+              </div>
+            </section>
           </div>
         </form>
       ) : (
@@ -631,7 +745,7 @@ export default function ReconnectionOrderForm() {
         </div>
       )}
 
-      {/* modais e toast */}
+      {/* Modais */}
       {blockOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-rose-700 p-6 rounded-xl text-center max-w-sm w-full text-white">
@@ -710,6 +824,7 @@ export default function ReconnectionOrderForm() {
         </div>
       )}
 
+      {/* Toast */}
       {msg && (
         <div
           className={`fixed bottom-5 right-5 px-4 py-2 rounded-lg shadow-lg text-sm z-50
