@@ -19,7 +19,13 @@ type CutRow = {
 };
 
 const norm = (s?: string | null) =>
-  (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/_/g, " ").replace(/\s+/g, " ").trim();
+  (s ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
 function StatusBadge({ status }: { status: string }) {
   const s = norm(status);
@@ -46,6 +52,9 @@ function StatusBadge({ status }: { status: string }) {
 
 type StatusFilter = "all" | "aguardando" | "cortada";
 
+// Perfis que podem excluir
+const ALLOWED_DELETE = new Set(["ADM", "DIRETOR", "COORDENADOR"]);
+
 export default function AllOrdersTable() {
   const [rows, setRows] = React.useState<CutRow[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -53,6 +62,42 @@ export default function AllOrdersTable() {
 
   const [filter, setFilter] = React.useState<ListFilter>({ q: "", startDate: null, endDate: null });
   const [statusFilter, setStatusFilter] = React.useState<StatusFilter>("all");
+
+  // Papel do usuário e permissão
+  const [userRole, setUserRole] = React.useState<string>("VISITANTE");
+  const canDelete = React.useMemo(
+    () => ALLOWED_DELETE.has((userRole || "VISITANTE").toUpperCase()),
+    [userRole]
+  );
+
+  const [permModalOpen, setPermModalOpen] = React.useState(false);
+  const [permText, setPermText] = React.useState("Apenas ADM, DIRETOR e COORDENADOR podem excluir ordens.");
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const { data: udata, error: uerr } = await supabase.auth.getUser();
+        if (uerr) throw uerr;
+        // Narrowing seguro (evita TS2532)
+        const user = (udata && "user" in udata ? (udata as any).user : undefined) as
+          | { id: string }
+          | undefined;
+        if (!user) {
+          setUserRole("VISITANTE");
+          return;
+        }
+        const { data, error } = await supabase
+          .from("app_users")
+          .select("papel")
+          .eq("id", user.id)
+          .single();
+        if (error) throw error;
+        setUserRole((data?.papel || "VISITANTE").toUpperCase());
+      } catch {
+        setUserRole("VISITANTE");
+      }
+    })();
+  }, []);
 
   const [deleteMode, setDeleteMode] = React.useState(false);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
@@ -68,48 +113,89 @@ export default function AllOrdersTable() {
     setLoading(true);
     let query = supabase
       .from("ordens_corte")
-      .select("id, os, matricula, bairro, rua, numero, ponto_referencia, status, pdf_path, pdf_ordem_path, created_at, cortada_em, corte_na_rua");
+      .select(
+        "id, os, matricula, bairro, rua, numero, ponto_referencia, status, pdf_path, pdf_ordem_path, created_at, cortada_em, corte_na_rua"
+      );
 
     if (filter.startDate) query = query.gte("created_at", `${filter.startDate}T00:00:00`);
-    if (filter.endDate)   query = query.lte("created_at", `${filter.endDate}T23:59:59`);
+    if (filter.endDate) query = query.lte("created_at", `${filter.endDate}T23:59:59`);
 
-    if (filter.q.trim() !== "") {
-      const q = filter.q.trim();
+    if ((filter.q || "").trim() !== "") {
+      const q = filter.q!.trim();
       query = query.or(`matricula.ilike.%${q}%,bairro.ilike.%${q}%,rua.ilike.%${q}%,os.ilike.%${q}%`);
     }
 
     query = query.order("created_at", { ascending: false });
 
     const { data, error } = await query;
-    if (error) setMsg({ kind: "err", text: error.message });
-    else setRows(((data || []) as unknown) as CutRow[]);
+    if (error) {
+      setMsg({ kind: "err", text: error.message });
+      setTimeout(() => setMsg(null), 2200);
+    } else {
+      setRows(((data || []) as unknown) as CutRow[]);
+    }
 
     setLoading(false);
   }
 
-  React.useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  React.useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function clearFilters() {
     setFilter({ q: "", startDate: null, endDate: null });
   }
 
+  // Guarda ao entrar/sair do modo excluir
+  function guardedToggleDeleteMode() {
+    if (!canDelete) {
+      setPermText("Apenas ADM, DIRETOR e COORDENADOR podem excluir ordens.");
+      setPermModalOpen(true);
+      return;
+    }
+    setDeleteMode((v) => !v);
+    setSelectedIds(new Set());
+  }
+
   async function handleBulkDelete() {
-    if (selectedIds.size === 0) return setMsg({ kind: "err", text: "Nenhuma OS selecionada para excluir." });
+    if (!canDelete) {
+      setPermText("Apenas ADM, DIRETOR e COORDENADOR podem excluir ordens.");
+      setPermModalOpen(true);
+      return;
+    }
+    if (selectedIds.size === 0) {
+      setMsg({ kind: "err", text: "Nenhuma OS selecionada para excluir." });
+      setTimeout(() => setMsg(null), 2200);
+      return;
+    }
+
     const ids = Array.from(selectedIds);
     const { error } = await supabase.from("ordens_corte").delete().in("id", ids);
-    if (error) return setMsg({ kind: "err", text: `Falha ao excluir: ${error.message}` });
+    if (error) {
+      if (/Impedido|insufficient_privilege|permission|RLS|row-level|policy|denied/i.test(error.message)) {
+        setPermText("A operação foi bloqueada pelas regras de segurança.");
+        setPermModalOpen(true);
+        return;
+      }
+      setMsg({ kind: "err", text: `Falha ao excluir: ${error.message}` });
+      setTimeout(() => setMsg(null), 2200);
+      return;
+    }
     setRows((prev) => prev.filter((r) => !selectedIds.has(r.id)));
     setSelectedIds(new Set());
     setDeleteMode(false);
     setMsg({ kind: "ok", text: "OS excluídas com sucesso." });
+    setTimeout(() => setMsg(null), 1800);
   }
 
   const filteredRows = React.useMemo(() => {
     if (statusFilter === "all") return rows;
     return rows.filter((r) => {
       const s = norm(r.status);
-      if (statusFilter === "aguardando") return s === "aguardando corte" || s === "pendente" || s === "aguardando";
-      if (statusFilter === "cortada")    return s === "cortada" || s === "cortado" || s === "feito";
+      if (statusFilter === "aguardando")
+        return s === "aguardando corte" || s === "pendente" || s === "aguardando";
+      if (statusFilter === "cortada") return s === "cortada" || s === "cortado" || s === "feito";
       return true;
     });
   }, [rows, statusFilter]);
@@ -133,13 +219,45 @@ export default function AllOrdersTable() {
 
   function renderCorteNaRua(val: boolean | null) {
     if (val === true)
-      return <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-emerald-600/20 text-emerald-200 ring-emerald-400/40 whitespace-nowrap">SIM</span>;
+      return (
+        <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-emerald-600/20 text-emerald-200 ring-emerald-400/40 whitespace-nowrap">
+          SIM
+        </span>
+      );
     if (val === false)
-      return <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-rose-600/20 text-rose-200 ring-rose-400/40 whitespace-nowrap">NÃO</span>;
+      return (
+        <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-rose-600/20 text-rose-200 ring-rose-400/40 whitespace-nowrap">
+          NÃO
+        </span>
+      );
     return "—";
   }
 
   const fmt = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR") : "—");
+
+  // Evita comentários/whitespace dentro do <colgroup> (elimina warnings do React)
+  const colWidths = React.useMemo(() => {
+    const arr: string[] = [];
+    if (deleteMode) arr.push("w-10");
+    arr.push(
+      "w-28", // matrícula
+      "w-24", // OS
+      "w-40", // bairro
+      "w-[320px]", // rua e nº
+      "w-[300px]", // ponto ref
+      "w-40", // status
+      "w-28", // pdf
+      "w-40", // criado em
+      "w-40", // cortada em
+      "w-36" // corte na rua
+    );
+    return arr;
+  }, [deleteMode]);
+
+  const colEls = React.useMemo(
+    () => colWidths.map((cls, i) => <col key={i} className={cls} />),
+    [colWidths]
+  );
 
   return (
     <div className="rounded-2xl bg-slate-900/50 ring-1 ring-white/10 p-4">
@@ -150,11 +268,29 @@ export default function AllOrdersTable() {
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 rounded-xl bg-white/5 ring-1 ring-white/10 p-1">
-            <button onClick={() => setStatusFilter("all")}        className={`px-3 py-1.5 text-xs rounded-lg ${statusFilter === "all" ? "bg-white/10" : "hover:bg-white/5"}`}>Todos</button>
-            <button onClick={() => setStatusFilter("aguardando")} className={`px-3 py-1.5 text-xs rounded-lg ${statusFilter === "aguardando" ? "bg-white/10" : "hover:bg-white/5"}`}>Aguardando Corte</button>
-            <button onClick={() => setStatusFilter("cortada")}    className={`px-3 py-1.5 text-xs rounded-lg ${statusFilter === "cortada" ? "bg-white/10" : "hover:bg-white/5"}`}>Cortada</button>
+            <button
+              onClick={() => setStatusFilter("all")}
+              className={`px-3 py-1.5 text-xs rounded-lg ${statusFilter === "all" ? "bg-white/10" : "hover:bg-white/5"}`}
+            >
+              Todos
+            </button>
+            <button
+              onClick={() => setStatusFilter("aguardando")}
+              className={`px-3 py-1.5 text-xs rounded-lg ${statusFilter === "aguardando" ? "bg-white/10" : "hover:bg-white/5"}`}
+            >
+              Aguardando Corte
+            </button>
+            <button
+              onClick={() => setStatusFilter("cortada")}
+              className={`px-3 py-1.5 text-xs rounded-lg ${statusFilter === "cortada" ? "bg-white/10" : "hover:bg-white/5"}`}
+            >
+              Cortada
+            </button>
           </div>
-          <button onClick={load} className="text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10">
+          <button
+            onClick={load}
+            className="text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10"
+          >
             {loading ? "Atualizando…" : "Atualizar"}
           </button>
         </div>
@@ -164,40 +300,34 @@ export default function AllOrdersTable() {
         value={filter}
         onChange={setFilter}
         onSearch={load}
-        onClear={() => { clearFilters(); setTimeout(load, 0); }}
-        deletable
+        onClear={() => {
+          clearFilters();
+          setTimeout(load, 0);
+        }}
+        deletable={canDelete}
         deleteMode={deleteMode}
         selectedCount={selectedIds.size}
-        onToggleDeleteMode={() => { setDeleteMode((v) => !v); setSelectedIds(new Set()); }}
+        onToggleDeleteMode={guardedToggleDeleteMode}
         onConfirmDelete={handleBulkDelete}
       />
 
       {msg && (
-        <div className={`mb-3 text-sm px-3 py-2 rounded-lg ${msg.kind === "ok" ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"}`}>
+        <div
+          className={`mb-3 text-sm px-3 py-2 rounded-lg ${
+            msg.kind === "ok" ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"
+          }`}
+        >
           {msg.text}
         </div>
       )}
 
-      {/* === TABELA: mesma pegada das pendentes === */}
       <div className="rounded-xl overflow-x-auto ring-1 ring-white/10">
         <table className="w-full text-sm table-auto">
-          <colgroup>
-            {deleteMode && <col className="w-10" />}
-            <col className="w-28" />        {/* matrícula */}
-            <col className="w-24" />        {/* OS */}
-            <col className="w-40" />        {/* bairro */}
-            <col className="w-[320px]" />   {/* rua e nº */}
-            <col className="w-[300px]" />   {/* ponto ref */}
-            <col className="w-40" />        {/* status */}
-            <col className="w-28" />        {/* pdf */}
-            <col className="w-40" />        {/* criado em */}
-            <col className="w-40" />        {/* cortada em */}
-            <col className="w-36" />        {/* corte na rua */}
-          </colgroup>
+          <colgroup>{colEls}</colgroup>
 
           <thead className="bg-white/5 text-slate-300">
             <tr>
-              {deleteMode && <th className="py-2 px-3"></th>}
+              {deleteMode && <th className="py-2 px-3" />}
               <th className="text-left font-medium py-2 px-3">Matrícula</th>
               <th className="text-left font-medium py-2 px-3">OS</th>
               <th className="text-left font-medium py-2 px-3">Bairro</th>
@@ -218,7 +348,12 @@ export default function AllOrdersTable() {
                 <tr key={r.id} className="bg-slate-950/40 align-middle">
                   {deleteMode && (
                     <td className="py-2 px-3 text-center">
-                      <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelect(r.id)} className="w-4 h-4" />
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(r.id)}
+                        onChange={() => toggleSelect(r.id)}
+                        className="w-4 h-4"
+                      />
                     </td>
                   )}
 
@@ -226,18 +361,26 @@ export default function AllOrdersTable() {
                   <td className="py-2 px-3 whitespace-nowrap">{r.os || "-"}</td>
 
                   <td className="py-2 px-3">
-                    <div className="truncate max-w-[160px]" title={r.bairro}>{r.bairro}</div>
+                    <div className="truncate max-w-[160px]" title={r.bairro}>
+                      {r.bairro}
+                    </div>
                   </td>
 
                   <td className="py-2 px-3">
-                    <div className="truncate max-w-[280px]" title={`${r.rua}, ${r.numero}`}>{r.rua}, {r.numero}</div>
+                    <div className="truncate max-w-[280px]" title={`${r.rua}, ${r.numero}`}>
+                      {r.rua}, {r.numero}
+                    </div>
                   </td>
 
                   <td className="py-2 px-3">
-                    <div className="truncate max-w-[260px]" title={r.ponto_referencia || "-"}>{r.ponto_referencia || "-"}</div>
+                    <div className="truncate max-w-[260px]" title={r.ponto_referencia || "-"}>
+                      {r.ponto_referencia || "-"}
+                    </div>
                   </td>
 
-                  <td className="py-2 px-3 text-center whitespace-nowrap"><StatusBadge status={r.status} /></td>
+                  <td className="py-2 px-3 text-center whitespace-nowrap">
+                    <StatusBadge status={r.status} />
+                  </td>
                   <td className="py-2 px-3 text-center">{renderPdfLink(pdfPath)}</td>
                   <td className="py-2 px-3 text-center whitespace-nowrap">{fmt(r.created_at)}</td>
                   <td className="py-2 px-3 text-center whitespace-nowrap">{fmt(r.cortada_em)}</td>
@@ -256,6 +399,24 @@ export default function AllOrdersTable() {
           </tbody>
         </table>
       </div>
+
+      {/* Modal de permissão negada */}
+      {permModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-lg text-center">
+            <h3 className="text-lg font-semibold text-white">Permissão necessária</h3>
+            <p className="text-slate-300 text-sm mt-2">{permText}</p>
+            <div className="mt-5">
+              <button
+                onClick={() => setPermModalOpen(false)}
+                className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white text-sm"
+              >
+                Entendi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

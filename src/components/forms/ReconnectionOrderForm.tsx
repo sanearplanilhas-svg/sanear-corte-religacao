@@ -14,17 +14,22 @@ type Pendente = {
   created_at: string;
 };
 
+// ======= ROLES (permissões) =======
+const ALLOWED_CREATE = new Set(["ADM", "DIRETOR", "COORDENADOR", "OPERADOR"]);
+const ALLOWED_LIBERACAO = new Set(["ADM", "DIRETOR", "COORDENADOR"]);
+// ==================================
+
 export default function ReconnectionOrderForm() {
   // abas
   const [subTab, setSubTab] = React.useState<SubTab>("PAPELETA");
 
-  // util
+  // utils
   const toUpper = (s: string) => (s ?? "").toUpperCase();
   const onlyDigits = (s: string) => (s ?? "").replace(/\D/g, "");
 
   // estado — papeleta
   const [matricula, setMatricula] = React.useState("");
-  const [telefone, setTelefone] = React.useState(""); // <<<<<< NOVO
+  const [telefone, setTelefone] = React.useState("");
   const [bairro, setBairro] = React.useState("");
   const [rua, setRua] = React.useState("");
   const [numero, setNumero] = React.useState("");
@@ -68,7 +73,7 @@ export default function ReconnectionOrderForm() {
   const [pendentes, setPendentes] = React.useState<Pendente[]>([]);
 
   React.useEffect(() => {
-    if (saving) return; // pausa o relógio enquanto salva
+    if (saving) return;
     const id = setInterval(() => setNow(new Date().toLocaleString("pt-BR")), 1000);
     return () => clearInterval(id);
   }, [saving]);
@@ -79,6 +84,49 @@ export default function ReconnectionOrderForm() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subTab]);
+
+  // ======= papel do usuário e permissões =======
+  const [userRole, setUserRole] = React.useState<string>("VISITANTE");
+  const canCreate = React.useMemo(() => ALLOWED_CREATE.has((userRole || "VISITANTE").toUpperCase()), [userRole]);
+  const canLiberacao = React.useMemo(() => ALLOWED_LIBERACAO.has((userRole || "VISITANTE").toUpperCase()), [userRole]);
+
+  const [permModalOpen, setPermModalOpen] = React.useState(false);
+  const [permText, setPermText] = React.useState("Seu perfil não tem permissão para executar esta ação.");
+  const [clearOnPermClose, setClearOnPermClose] = React.useState(false);
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const { data: udata, error: uerr } = await supabase.auth.getUser();
+        if (uerr) throw uerr;
+        const user = udata?.user;
+        if (!user) {
+          setUserRole("VISITANTE");
+          return;
+        }
+        const { data, error } = await supabase
+          .from("app_users")
+          .select("papel")
+          .eq("id", user.id)
+          .single();
+        if (error) throw error;
+        setUserRole((data?.papel || "VISITANTE").toUpperCase());
+      } catch {
+        setUserRole("VISITANTE");
+      }
+    })();
+  }, []);
+
+  // bloqueia acesso direto à aba Liberação
+  React.useEffect(() => {
+    if (subTab === "LIBERACAO" && !canLiberacao) {
+      setPermText("Acesso restrito: apenas ADM, DIRETOR e COORDENADOR podem acessar a Liberação de Papeleta.");
+      setClearOnPermClose(false);
+      setPermModalOpen(true);
+      setSubTab("PAPELETA");
+    }
+  }, [subTab, canLiberacao]);
+  // ==============================================
 
   async function loadPendentes() {
     try {
@@ -109,7 +157,7 @@ export default function ReconnectionOrderForm() {
 
   function clear() {
     setMatricula("");
-    setTelefone(""); // <<<<<< NOVO
+    setTelefone("");
     setBairro("");
     setRua("");
     setNumero("");
@@ -140,26 +188,16 @@ export default function ReconnectionOrderForm() {
 
   // telefone — helpers
   const formatTelefonePretty = (digits: string) => {
-    // digits pode ser ddd+numero (10 ou 11) — prioriza DDD que vier
     let d = digits;
-    if (d.startsWith("55")) d = d.slice(2); // remove country se veio sem espaços
+    if (d.startsWith("55")) d = d.slice(2);
     let ddd = d.slice(0, 2);
     let rest = d.slice(2);
-
-    // Se não tiver DDD (8 ou 9 dígitos), força 27
     if (d.length === 8 || d.length === 9) {
       ddd = "27";
       rest = d;
     }
-
-    // Monta máscara
-    if (rest.length === 9) {
-      return `+55 ${ddd} ${rest.slice(0, 5)}-${rest.slice(5)}`;
-    }
-    if (rest.length === 8) {
-      return `+55 ${ddd} ${rest.slice(0, 4)}-${rest.slice(4)}`;
-    }
-    // fallback sem traço
+    if (rest.length === 9) return `+55 ${ddd} ${rest.slice(0, 5)}-${rest.slice(5)}`;
+    if (rest.length === 8) return `+55 ${ddd} ${rest.slice(0, 4)}-${rest.slice(4)}`;
     return `+55 ${ddd} ${rest}`;
   };
 
@@ -170,24 +208,9 @@ export default function ReconnectionOrderForm() {
   const handleTelefoneBlur = () => {
     const d = onlyDigits(telefone);
     if (!d) return;
-
-    // Regra do usuário:
-    // - só número (8/9 dígitos) => completa com +55 27
-    // - se digitar com DDD 27 => completa com +55
-    // - se digitar com outro DDD, só adiciona +55 (não troca o DDD do usuário)
     let out = d;
-
-    if (d.length === 8 || d.length === 9) {
-      // sem DDD -> usa 27
-      out = `27${d}`;
-    } else if (d.length === 10 || d.length === 11) {
-      // já tem DDD; mantém
-      out = d;
-    } else if (d.length > 11 && d.startsWith("55")) {
-      // veio com 55 no começo, remove pra normalizar
-      out = d.slice(2);
-    }
-
+    if (d.length === 8 || d.length === 9) out = `27${d}`;
+    else if (d.length > 11 && d.startsWith("55")) out = d.slice(2);
     setTelefone(formatTelefonePretty(out));
   };
 
@@ -284,7 +307,7 @@ export default function ReconnectionOrderForm() {
       const { error: insErr } = await supabase.from("ordens_religacao").insert({
         id,
         matricula: matricula.trim(),
-        telefone: telefone.trim(), // <<<<<< NOVO
+        telefone: telefone.trim(),
         bairro: bairro.trim(),
         rua: rua.trim(),
         numero: numero.trim(),
@@ -310,6 +333,14 @@ export default function ReconnectionOrderForm() {
 
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
+
+    if (!canCreate) {
+      setPermText("Apenas ADM, DIRETOR, COORDENADOR e OPERADOR podem criar papeletas de religação.");
+      setClearOnPermClose(true);
+      setPermModalOpen(true);
+      return;
+    }
+
     const m = formatMatricula();
     const err = validatePapeleta();
     if (err) {
@@ -318,7 +349,7 @@ export default function ReconnectionOrderForm() {
       return;
     }
 
-    // ====== bloqueio 24h (somente se a última NÃO estiver ativa) ======
+    // bloqueio 24h (se a última não estiver ativa)
     const { data: ultima, error: errLast } = await supabase
       .from("ordens_religacao")
       .select("created_at, status")
@@ -348,7 +379,6 @@ export default function ReconnectionOrderForm() {
         }
       }
     }
-    // ====== /bloqueio 24h ======
 
     if (!pdfComprovante) {
       setPendingSave(() => doSave);
@@ -437,7 +467,15 @@ export default function ReconnectionOrderForm() {
           Nova Papeleta
         </button>
         <button
-          onClick={() => setSubTab("LIBERACAO")}
+          onClick={() => {
+            if (!canLiberacao) {
+              setPermText("Acesso restrito: apenas ADM, DIRETOR e COORDENADOR podem acessar a Liberação de Papeleta.");
+              setClearOnPermClose(false);
+              setPermModalOpen(true);
+              return;
+            }
+            setSubTab("LIBERACAO");
+          }}
           className={`px-3 py-2 rounded-lg text-sm transition border
             ${subTab === "LIBERACAO"
               ? "bg-indigo-500/20 text-indigo-200 border-indigo-400/40"
@@ -449,7 +487,6 @@ export default function ReconnectionOrderForm() {
 
       {subTab === "PAPELETA" ? (
         <form onSubmit={onSave} className="mt-6">
-          {/* Seções com divisórias para dar hierarquia */}
           <div className="space-y-8 divide-y divide-white/10">
             {/* Seção 1: Identificação */}
             <section className="space-y-4">
@@ -458,7 +495,7 @@ export default function ReconnectionOrderForm() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Coluna esquerda: matrícula + telefone (mesmo tamanho dos demais) */}
+                {/* Coluna esquerda: matrícula + telefone */}
                 <div className="grid grid-cols-1 gap-4">
                   {/* Matrícula */}
                   <div>
@@ -568,7 +605,7 @@ export default function ReconnectionOrderForm() {
               </div>
             </section>
 
-            {/* Seção 3: Observações (MESMO TAMANHO DOS OUTROS) */}
+            {/* Seção 3: Observações */}
             <section className="pt-8 space-y-4">
               <h3 className="text-sm font-semibold text-slate-300">Observações</h3>
 
@@ -676,7 +713,7 @@ export default function ReconnectionOrderForm() {
           </div>
         </form>
       ) : (
-        // LIBERAÇÃO — SOMENTE LISTA
+        // ===== LIBERAÇÃO — LISTA =====
         <div className="mt-6 space-y-6">
           <div className="flex items-center justify-between">
             <h3 className="text-base font-semibold text-white">Papeletas aguardando liberação</h3>
@@ -689,59 +726,77 @@ export default function ReconnectionOrderForm() {
             </button>
           </div>
 
-          <div className="rounded-xl overflow-hidden ring-1 ring-white/10">
-            <table className="min-w-full text-sm">
-              <thead className="bg-white/5 text-slate-300">
-                <tr>
-                  <th className="px-3 py-2 text-left">MATRÍCULA</th>
-                  <th className="px-3 py-2 text-left">BAIRRO</th>
-                  <th className="px-3 py-2 text-left">RUA</th>
-                  <th className="px-3 py-2 text-left">CRIADA EM</th>
-                  <th className="px-3 py-2 text-left">TROCAR HIDRÔMETRO?</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/10">
-                {carregandoLista ? (
+          {/* >>> Responsividade da tabela: wrapper com overflow horizontal + truncates nos campos longos */}
+          <div className="rounded-xl ring-1 ring-white/10">
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-white/5 text-slate-300">
                   <tr>
-                    <td colSpan={5} className="px-3 py-4 text-slate-400">Carregando…</td>
+                    <th className="px-3 py-2 text-left">MATRÍCULA</th>
+                    <th className="px-3 py-2 text-left">BAIRRO</th>
+                    <th className="px-3 py-2 text-left">RUA</th>
+                    <th className="px-3 py-2 text-left">CRIADA EM</th>
+                    <th className="px-3 py-2 text-left">TROCAR HIDRÔMETRO?</th>
                   </tr>
-                ) : pendentes.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-3 py-4 text-slate-400">Nenhuma papeleta pendente.</td>
-                  </tr>
-                ) : (
-                  pendentes.map((p) => (
-                    <tr key={p.id} className="bg-slate-950/40">
-                      <td className="px-3 py-2 font-mono">{p.matricula}</td>
-                      <td className="px-3 py-2">{toUpper(p.bairro ?? "")}</td>
-                      <td className="px-3 py-2">{toUpper(p.rua ?? "")}</td>
-                      <td className="px-3 py-2">{fmt(p.created_at)}</td>
-                      <td className="px-3 py-2">
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => liberar(p.id, true)}
-                            className="px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs"
-                            title="Precisa trocar hidrômetro: SIM"
-                          >
-                            SIM
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => liberar(p.id, false)}
-                            className="px-3 py-1.5 rounded-md bg-rose-600 hover:bg-rose-500 text-white text-xs"
-                            title="Precisa trocar hidrômetro: NÃO"
-                          >
-                            NÃO
-                          </button>
-                        </div>
-                      </td>
+                </thead>
+                <tbody className="divide-y divide-white/10">
+                  {carregandoLista ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-4 text-slate-400">Carregando…</td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : pendentes.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-4 text-slate-400">Nenhuma papeleta pendente.</td>
+                    </tr>
+                  ) : (
+                    pendentes.map((p) => (
+                      <tr key={p.id} className="bg-slate-950/40 align-middle">
+                        <td className="px-3 py-2 font-mono whitespace-nowrap">{p.matricula}</td>
+                        <td className="px-3 py-2">
+                          <div
+                            className="truncate max-w-[160px] md:max-w-none md:whitespace-normal md:break-words"
+                            title={toUpper(p.bairro ?? "")}
+                          >
+                            {toUpper(p.bairro ?? "")}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2">
+                          <div
+                            className="truncate max-w-[240px] md:max-w-none md:whitespace-normal md:break-words"
+                            title={toUpper(p.rua ?? "")}
+                          >
+                            {toUpper(p.rua ?? "")}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">{fmt(p.created_at)}</td>
+                        <td className="px-3 py-2">
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => liberar(p.id, true)}
+                              className="px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs"
+                              title="Precisa trocar hidrômetro: SIM"
+                            >
+                              SIM
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => liberar(p.id, false)}
+                              className="px-3 py-1.5 rounded-md bg-rose-600 hover:bg-rose-500 text-white text-xs"
+                              title="Precisa trocar hidrômetro: NÃO"
+                            >
+                              NÃO
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
+          {/* <<< /Responsividade da tabela */}
         </div>
       )}
 
@@ -818,6 +873,24 @@ export default function ReconnectionOrderForm() {
               </button>
               <button onClick={confirmarSenhaDiretor} className="px-4 py-2 rounded-lg bg-fuchsia-600 hover:bg-fuchsia-500 text-white">
                 Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de permissão negada */}
+      {permModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-lg text-center">
+            <h3 className="text-lg font-semibold text-white">Permissão necessária</h3>
+            <p className="text-slate-300 text-sm mt-2">{permText}</p>
+            <div className="mt-5">
+              <button
+                onClick={() => { clear(); setPermModalOpen(false); }}
+                className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white text-sm"
+              >
+                Entendi
               </button>
             </div>
           </div>

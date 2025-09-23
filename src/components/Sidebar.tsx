@@ -12,6 +12,7 @@ import {
   BarChart2,
   Users,
   LogOut,
+  History, // 👈 novo ícone
 } from "lucide-react";
 
 type Props = {
@@ -110,9 +111,10 @@ export default function Sidebar({ active, onSelect }: Props) {
         <SectionTitle>Administração</SectionTitle>
         <Item icon={BarChart2} label="Relatórios" k="relatorios" active={active === "relatorios"} onSelect={onSelect} />
         <Item icon={Users} label="Usuários" k="usuarios" active={active === "usuarios"} onSelect={onSelect} />
+        <Item icon={History} label="Histórico" k="historico" active={active === "historico"} onSelect={onSelect} /> {/* 👈 novo item */}
       </div>
 
-      {/* rodapé: só o botão Sair (removemos “Histórico/Config”) */}
+      {/* rodapé */}
       <div className="p-3 border-t border-white/10 space-y-2">
         <button
           onClick={handleSignOut}

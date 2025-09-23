@@ -1,18 +1,20 @@
+// src/components/charts/Bars.tsx
 import React from "react";
 import { motion } from "framer-motion";
 
 /**
  * Barras animadas (crescimento vertical + hover)
+ * - overflow-hidden no wrapper para evitar "sair" no hover em telas pequenas
  */
 export default function Bars() {
   const vals = [12, 24, 18, 30, 26, 34, 38];
 
   return (
-    <div className="flex items-end gap-2 h-40 w-full">
+    <div className="flex items-end gap-2 h-40 w-full min-w-0 overflow-hidden">
       {vals.map((v, i) => (
         <motion.div
           key={i}
-          className="flex-1 rounded-t-lg bg-rose-600/80"
+          className="flex-1 min-w-0 rounded-t-lg bg-rose-600/80"
           initial={{ height: 0, opacity: 0.5 }}
           animate={{ height: v * 3, opacity: 1 }}
           whileHover={{ scaleY: 1.06 }}

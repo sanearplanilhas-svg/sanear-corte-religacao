@@ -100,23 +100,24 @@ function colorFromString(s: string) {
   return `hsl(${hue} 70% 45%)`;
 }
 function initialsFromName(nameOrEmail: string) {
-  const base = (nameOrEmail || "").trim();
+  const base = `${nameOrEmail ?? ""}`.trim();
   if (!base) return "?";
 
-  const parts: string[] = base.includes("@")
-    ? base.split("@")[0].replace(/[._-]+/g, " ").split(" ")
-    : base.split(" ");
+  // Evita .includes() para compatibilidade com libs mais antigas
+  const atIndex = base.indexOf("@");
+  const left = atIndex >= 0 ? base.slice(0, atIndex) : base;
 
-  // seguro contra undefined — corrige TS2532
+  // Normaliza separadores e espaços
+  const parts = left.replace(/[._-]+/g, " ").trim().split(/\s+/);
+
   const letters = parts
     .filter(Boolean)
     .slice(0, 2)
-    .map((p) => (p?.[0] ?? "").toUpperCase())
-    .filter(Boolean);
+    .map((p) => p.charAt(0).toUpperCase());
 
-  const fallback = base.charAt(0).toUpperCase();
-  return letters.join("") || fallback || "?";
+  return letters.join("") || base.charAt(0).toUpperCase() || "?";
 }
+
 const Avatar: React.FC<{ text: string; size?: number; className?: string }> = ({ text, size = 40, className }) => {
   const initials = initialsFromName(text);
   const bg = colorFromString(text);
@@ -211,13 +212,14 @@ export default function UsersPage() {
     try {
       const res = await supabase.auth.getUser();
       if (res.error) throw res.error;
-      const authData = res.data;
-      if (!authData || !authData.user) throw new Error("Sessão inválida. Faça login novamente.");
-      const user = authData.user as any;
 
-      const uid: string = user.id;
-      const emailFromAuth: string = user.email ?? "";
-      setLastSignInAt(user.last_sign_in_at ?? null);
+      // ✅ Narrowing seguro para evitar TS2532
+      const user = (res.data && "user" in res.data ? res.data.user : undefined) as any | undefined;
+      if (!user) throw new Error("Sessão inválida. Faça login novamente.");
+
+      const uid: string = user.id as string;
+      const emailFromAuth: string = (user.email ?? "") as string;
+      setLastSignInAt((user.last_sign_in_at ?? null) as string | null);
 
       // is_admin rpc (se não existir, false)
       try {
@@ -319,12 +321,12 @@ export default function UsersPage() {
     try {
       const res = await supabase.auth.getUser();
       if (res.error) return;
-      const authData = res.data;
-      const user = authData?.user;
+
+      const user = (res.data && "user" in res.data ? res.data.user : undefined) as any | undefined;
       if (!user) return;
 
-      const uid: string = user.id;
-      const emailFromAuth: string = user.email ?? "";
+      const uid: string = user.id as string;
+      const emailFromAuth: string = (user.email ?? "") as string;
 
       const sel = await supabase
         .from("app_users")
@@ -389,7 +391,6 @@ export default function UsersPage() {
 
   // -------------------------- Bloquear / desbloquear (perfil) --------------------------
   async function onClickEditar() {
-    // refresh antes de pedir a senha (reverte para o último salvo)
     await refreshCurrentProfile();
     setPwd("");
     setPwdErr("");
@@ -407,7 +408,6 @@ export default function UsersPage() {
   }
   function relock() {
     setCanEdit(false);
-    // reverte também quando cancelar edição
     refreshCurrentProfile();
   }
 
@@ -784,7 +784,8 @@ export default function UsersPage() {
             />
           </div>
 
-          <div className="overflow-auto rounded-xl ring-1 ring-white/10">
+          {/* 🚩 Ajuste de responsividade: overflow-x-auto no wrapper da tabela */}
+          <div className="overflow-x-auto rounded-xl ring-1 ring-white/10">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-800/60 text-slate-300">
                 <tr>
