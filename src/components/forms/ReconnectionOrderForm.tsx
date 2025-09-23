@@ -19,6 +19,10 @@ const ALLOWED_CREATE = new Set(["ADM", "DIRETOR", "COORDENADOR", "OPERADOR"]);
 const ALLOWED_LIBERACAO = new Set(["ADM", "DIRETOR", "COORDENADOR"]);
 // ==================================
 
+// ✅ Telefone: mesmas regras do CHECK do banco
+const PHONE_ALLOWED_RE = /^[0-9\-\+\(\) ]{8,20}$/;
+const phoneClean = (s: string) => (s ?? "").replace(/[^\d\-\+\(\) ]/g, "").trim();
+
 export default function ReconnectionOrderForm() {
   // abas
   const [subTab, setSubTab] = React.useState<SubTab>("PAPELETA");
@@ -257,6 +261,11 @@ export default function ReconnectionOrderForm() {
   function validatePapeleta(): string | null {
     if (!matricula.trim()) return "Informe a matrícula.";
     if (!telefone.trim()) return "Informe o telefone de contato.";
+    // ✅ valida exatamente como o CHECK do banco (após sanitizar)
+    const telDb = phoneClean(telefone);
+    if (!PHONE_ALLOWED_RE.test(telDb)) {
+      return "Telefone inválido. Use apenas números, espaço, +, (, ) e -, com 8 a 20 caracteres.";
+    }
     if (!bairro.trim()) return "Informe o bairro.";
     if (!rua.trim()) return "Informe a rua.";
     if (!numero.trim()) return "Informe o número.";
@@ -303,11 +312,14 @@ export default function ReconnectionOrderForm() {
 
       if (!ordemPath) throw new Error("Falha ao salvar o PDF obrigatório.");
 
+      // ✅ telefone sanitizado para obedecer o CHECK
+      const telefoneDb = phoneClean(telefone);
+
       // INSERT único com os paths
       const { error: insErr } = await supabase.from("ordens_religacao").insert({
         id,
         matricula: matricula.trim(),
-        telefone: telefone.trim(),
+        telefone: telefoneDb, // ✅ agora obedece ao CHECK
         bairro: bairro.trim(),
         rua: rua.trim(),
         numero: numero.trim(),

@@ -17,6 +17,7 @@ import AllOrdersTable from "../components/tables/AllOrdersTable";
 import AllReconnectionsTable from "../components/tables/AllReconnectionsTable";
 
 import UsersPage from "./UsersPage";
+import Historico from "./Historico"; // ✅ ADICIONADO
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 
 type BairroRow = { id: number; bairro: string };
@@ -469,6 +470,8 @@ export default function Dashboard() {
               )}
 
               {active === "usuarios" && <UsersPage />}
+
+              {active === "historico" && <Historico />}{/* ✅ ADICIONADO */}
 
               {active === "relatorios" && (
                 <div className="flex items-center justify-center min-h-[60vh]">

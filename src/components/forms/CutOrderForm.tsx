@@ -25,7 +25,7 @@ export default function CutOrderForm() {
   // modal do tipo do corte
   const [tipoModalOpen, setTipoModalOpen] = React.useState(false);
 
-  // ======= NOVO: papel do usuário e modal de permissão =======
+  // ======= PAPEL do usuário (robusto) + modal de permissão =======
   const [userRole, setUserRole] = React.useState<string>("VISITANTE");
   const isAllowed = React.useMemo(
     () => ALLOWED_ROLES.has((userRole || "VISITANTE").toUpperCase()),
@@ -36,15 +36,15 @@ export default function CutOrderForm() {
   const [permText, setPermText] = React.useState(
     "Seu perfil não tem permissão para criar ordens de corte. Apenas ADM, DIRETOR, COORDENADOR e OPERADOR podem."
   );
-  // ===========================================================
 
+  // Atualiza o relógio
   React.useEffect(() => {
     if (saving) return;
     const id = setInterval(() => setNow(new Date().toLocaleString("pt-BR")), 1000);
     return () => clearInterval(id);
   }, [saving]);
 
-  // ======= NOVO: buscar papel do usuário logado =======
+  // 🚀 Busca o papel no app_users com fallback (id -> email) e usando maybeSingle()
   React.useEffect(() => {
     (async () => {
       try {
@@ -55,20 +55,37 @@ export default function CutOrderForm() {
           setUserRole("VISITANTE");
           return;
         }
-        const { data, error } = await supabase
+
+        // 1) tenta por id
+        let papel: string | null = null;
+        const { data: byId, error: e1 } = await supabase
           .from("app_users")
           .select("papel")
           .eq("id", user.id)
-          .single();
-        if (error) throw error;
-        setUserRole((data?.papel || "VISITANTE").toUpperCase());
+          .maybeSingle(); // <<<<<< chave para não cair em erro quando não achar
+
+        if (e1) throw e1;
+        if (byId?.papel) {
+          papel = String(byId.papel);
+        } else if (user.email) {
+          // 2) fallback por email
+          const { data: byEmail, error: e2 } = await supabase
+            .from("app_users")
+            .select("papel")
+            .eq("email", user.email)
+            .maybeSingle();
+          if (e2) throw e2;
+          if (byEmail?.papel) papel = String(byEmail.papel);
+        }
+
+        setUserRole((papel || "VISITANTE").toUpperCase());
       } catch {
         // fallback seguro
         setUserRole("VISITANTE");
       }
     })();
   }, []);
-  // ===================================================
+  // ================================================================
 
   function clear() {
     setMatricula("");
@@ -162,7 +179,6 @@ export default function CutOrderForm() {
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
 
-    // ======= NOVO: checagem de permissão no frontend =======
     if (!isAllowed) {
       setPermText(
         "Seu perfil não tem permissão para criar ordens de corte. Apenas ADM, DIRETOR, COORDENADOR e OPERADOR podem."
@@ -170,7 +186,6 @@ export default function CutOrderForm() {
       setPermModalOpen(true);
       return;
     }
-    // =======================================================
 
     const m = formatMatricula();
     const err = validate();
@@ -189,7 +204,7 @@ export default function CutOrderForm() {
       setSaving(true);
       setMsg(null);
 
-      // segurança extra: revalida no momento do envio
+      // revalida permissão imediatamente antes de enviar
       if (!isAllowed) {
         setPermText(
           "Seu perfil não tem permissão para criar ordens de corte. Apenas ADM, DIRETOR, COORDENADOR e OPERADOR podem."
@@ -229,7 +244,8 @@ export default function CutOrderForm() {
         motivo_outros: motivo === "outros" ? motivoOutros.trim() : null,
         status: "aguardando_corte",
         pdf_ordem_path: ordemPath,
-        corte_na_rua: corteNaRua, // <<< grava aqui
+        corte_na_rua: corteNaRua, // grava aqui
+        // created_by: não precisa — default do banco usa auth.uid()
       });
 
       if (insErr) throw insErr;
@@ -238,10 +254,7 @@ export default function CutOrderForm() {
       clear();
     } catch (e: any) {
       const emsg = String(e?.message || "");
-      // ======= NOVO: se RLS/trigger bloquear, avisa em modal amigável =======
-      if (
-        /Impedido|insufficient_privilege|permission|RLS|row-level|policy|denied/i.test(emsg)
-      ) {
+      if (/Impedido|insufficient_privilege|permission|RLS|row-level|policy|denied/i.test(emsg)) {
         setPermText(
           "A operação foi bloqueada pelas regras de segurança. Apenas ADM, DIRETOR, COORDENADOR e OPERADOR podem criar ordens de corte."
         );
@@ -249,7 +262,6 @@ export default function CutOrderForm() {
       } else {
         setMsg({ kind: "err", text: emsg || "Falha ao salvar." });
       }
-      // ======================================================================
     } finally {
       setSaving(false);
       setTimeout(() => setMsg(null), 2000);
@@ -458,7 +470,7 @@ export default function CutOrderForm() {
         </div>
       )}
 
-      {/* ======= NOVO: Modal de permissão negada ======= */}
+      {/* Modal de permissão negada */}
       {permModalOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-lg text-center">
@@ -475,7 +487,6 @@ export default function CutOrderForm() {
           </div>
         </div>
       )}
-      {/* =============================================== */}
 
       {/* Toast */}
       {msg && (

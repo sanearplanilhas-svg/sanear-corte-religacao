@@ -1,4 +1,4 @@
-const CACHE = 'pwa-supabase-login-v1';
+﻿const CACHE = 'pwa-supabase-login-v1';
 const ASSETS = ['/', '/index.html', '/manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
