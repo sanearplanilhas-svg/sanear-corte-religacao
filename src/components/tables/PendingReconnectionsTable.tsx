@@ -60,28 +60,8 @@ function HidrometroBadge({ value }: { value: boolean | null }) {
   return <span className="text-slate-400 text-xs whitespace-nowrap">—</span>;
 }
 
-// -------- helper para abrir a página /overlay-print ----------
-function openOverlayPrint(pdfUrl: string, telefone?: string | null, referencia?: string | null) {
-  const isHashRouter = window.location.hash.startsWith("#/");
-
-  let base: string;
-  if (isHashRouter) {
-    base = `${window.location.origin}${window.location.pathname}#/overlay-print`;
-  } else {
-    const path = window.location.pathname.endsWith("/")
-      ? window.location.pathname
-      : window.location.pathname + "/";
-    base = `${window.location.origin}${path}overlay-print`;
-  }
-
-  const url = new URL(base);
-  url.searchParams.set("url", pdfUrl);
-  if (telefone && telefone.trim()) url.searchParams.set("telefone", telefone.trim());
-  if (referencia && referencia.trim()) url.searchParams.set("referencia", referencia.trim());
-
-  window.open(url.toString(), "_blank", "noopener,noreferrer");
-}
-// -----------------------------------------------------------------
+// ===== Perfis autorizados a ATIVAR
+const ALLOWED_ACTIVATE = new Set(["ADM", "TERCEIRIZADA"]);
 
 export default function PendingReconnectionsTable() {
   const [rows, setRows] = React.useState<PendRow[]>([]);
@@ -93,32 +73,42 @@ export default function PendingReconnectionsTable() {
   const fmtDateTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR") : "—");
   const fmtTel = (t?: string | null) => (t && t.trim() ? t : "—");
 
-  // ====== MODAIS ======
-  const [modalAtivarSim, setModalAtivarSim] = React.useState<{
-    open: boolean;
-    id?: string;
-    matricula?: string;
-    observacao?: string | null;
-    novoNumero?: string;
-    saving?: boolean;
-  }>({ open: false });
+  // ===== Papel do usuário e checagem de permissão
+  const [userRole, setUserRole] = React.useState<string>("VISITANTE");
+  const canActivate = React.useMemo(
+    () => ALLOWED_ACTIVATE.has((userRole || "VISITANTE").toUpperCase()),
+    [userRole]
+  );
 
-  const [modalAtivarNao, setModalAtivarNao] = React.useState<{
-    open: boolean;
-    id?: string;
-    matricula?: string;
-    observacao?: string | null;
-    saving?: boolean;
-  }>({ open: false });
+  const [permModalOpen, setPermModalOpen] = React.useState(false);
+  const [permText, setPermText] = React.useState("Apenas TERCEIRIZADA e ADM podem ativar papeletas.");
 
-  const [modalImprimir, setModalImprimir] = React.useState<{
-    open: boolean;
-    matricula?: string;
-    observacao?: string | null;
-    pdfUrl?: string | null;
-    telefone?: string | null;
-    pontoRef?: string | null;
-  }>({ open: false });
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const { data: udata, error: uerr } = await supabase.auth.getUser();
+        if (uerr) throw uerr;
+        // Narrowing seguro para evitar TS2532
+        const user = (udata && "user" in udata ? (udata as any).user : undefined) as
+          | { id: string }
+          | undefined;
+        if (!user) {
+          setUserRole("VISITANTE");
+          return;
+        }
+        const { data, error } = await supabase
+          .from("app_users")
+          .select("papel")
+          .eq("id", user.id)
+          .single();
+        if (error) throw error;
+        setUserRole((data?.papel || "VISITANTE").toUpperCase());
+      } catch {
+        setUserRole("VISITANTE");
+      }
+    })();
+  }, []);
+  // =======================================
 
   // ====== CARREGAR LISTA ======
   async function load() {
@@ -160,8 +150,12 @@ export default function PendingReconnectionsTable() {
 
       const { data, error } = await query;
 
-      if (error) setMsg({ kind: "err", text: error.message });
-      else setRows(((data ?? []) as unknown) as PendRow[]);
+      if (error) {
+        setMsg({ kind: "err", text: error.message });
+        setTimeout(() => setMsg(null), 2200);
+      } else {
+        setRows(((data ?? []) as unknown) as PendRow[]);
+      }
     } finally {
       setLoading(false);
     }
@@ -176,27 +170,50 @@ export default function PendingReconnectionsTable() {
     setFilter({ q: "", startDate: null, endDate: null });
   }
 
-  // ====== IMPRESSÃO (abre overlay-print) ======
+  // ====== IMPRESSÃO (abre PDF direto) ======
   function renderImprimirCell(row: PendRow) {
     if (!row.pdf_ordem_path) return "—";
     const { data } = supabase.storage.from("ordens-pdfs").getPublicUrl(row.pdf_ordem_path);
-    const pdfUrl = data?.publicUrl || null;
+    const pdfUrl = data?.publicUrl;
     if (!pdfUrl) return <span className="text-slate-400 text-xs">Sem link</span>;
-
     return (
-      <button
-        type="button"
-        onClick={() => openOverlayPrint(pdfUrl, row.telefone || "", row.ponto_referencia || "")}
+      <a
+        href={pdfUrl}
+        target="_blank"
+        rel="noopener noreferrer"
         className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30 whitespace-nowrap"
-        title="Imprimir PDF com sobreposição"
       >
         Imprimir
-      </button>
+      </a>
     );
   }
 
-  // ====== FLUXO ATIVAR (igual ao seu) ======
+  // ====== FLUXO ATIVAR ======
+  const [modalAtivarSim, setModalAtivarSim] = React.useState<{
+    open: boolean;
+    id?: string;
+    matricula?: string;
+    observacao?: string | null;
+    novoNumero?: string;
+    saving?: boolean;
+  }>({ open: false });
+
+  const [modalAtivarNao, setModalAtivarNao] = React.useState<{
+    open: boolean;
+    id?: string;
+    matricula?: string;
+    observacao?: string | null;
+    saving?: boolean;
+  }>({ open: false });
+
   function onClickAtivar(row: PendRow) {
+    // Guarda de permissão antes de abrir modal
+    if (!canActivate) {
+      setPermText("Apenas TERCEIRIZADA e ADM podem ativar papeletas.");
+      setPermModalOpen(true);
+      return;
+    }
+
     if (row.precisa_troca_hidrometro === true) {
       setModalAtivarSim({
         open: true,
@@ -219,6 +236,12 @@ export default function PendingReconnectionsTable() {
 
   async function confirmarAtivarSim() {
     if (!modalAtivarSim.id) return;
+    if (!canActivate) {
+      setPermText("Apenas TERCEIRIZADA e ADM podem ativar papeletas.");
+      setPermModalOpen(true);
+      return;
+    }
+
     const id = modalAtivarSim.id;
     const numeroNovo = (modalAtivarSim.novoNumero ?? "").trim();
 
@@ -228,48 +251,86 @@ export default function PendingReconnectionsTable() {
 
     try {
       setModalAtivarSim((m) => ({ ...m, saving: true }));
+
       const { error } = await supabase
         .from("ordens_religacao")
         .update({ status: "ativa", ativa_em: new Date().toISOString(), observacao: novaObs })
         .eq("id", id);
 
       if (error) {
+        if (/Impedido|insufficient_privilege|permission|RLS|row-level|policy|denied/i.test(error.message)) {
+          setPermText("A operação foi bloqueada pelas regras de segurança.");
+          setPermModalOpen(true);
+          setModalAtivarSim((m) => ({ ...m, saving: false }));
+          return;
+        }
         setMsg({ kind: "err", text: `Falha ao ativar: ${error.message}` });
+        setTimeout(() => setMsg(null), 2200);
         setModalAtivarSim((m) => ({ ...m, saving: false }));
         return;
       }
-      setRows((prev) => prev.filter((r) => r.id !== id));
+
+      await load();
       setMsg({ kind: "ok", text: "Papeleta marcada como ATIVA." });
+      setTimeout(() => setMsg(null), 1800);
       setModalAtivarSim({ open: false });
     } catch (e: any) {
       setMsg({ kind: "err", text: e?.message ?? "Falha ao ativar." });
+      setTimeout(() => setMsg(null), 2200);
       setModalAtivarSim((m) => ({ ...m, saving: false }));
     }
   }
 
   async function confirmarAtivarNao() {
     if (!modalAtivarNao.id) return;
+    if (!canActivate) {
+      setPermText("Apenas TERCEIRIZADA e ADM podem ativar papeletas.");
+      setPermModalOpen(true);
+      return;
+    }
+
     const id = modalAtivarNao.id;
     try {
       setModalAtivarNao((m) => ({ ...m, saving: true }));
+
       const { error } = await supabase
         .from("ordens_religacao")
         .update({ status: "ativa", ativa_em: new Date().toISOString() })
         .eq("id", id);
 
       if (error) {
+        if (/Impedido|insufficient_privilege|permission|RLS|row-level|policy|denied/i.test(error.message)) {
+          setPermText("A operação foi bloqueada pelas regras de segurança.");
+          setPermModalOpen(true);
+          setModalAtivarNao((m) => ({ ...m, saving: false }));
+          return;
+        }
         setMsg({ kind: "err", text: `Falha ao ativar: ${error.message}` });
+        setTimeout(() => setMsg(null), 2200);
         setModalAtivarNao((m) => ({ ...m, saving: false }));
         return;
       }
-      setRows((prev) => prev.filter((r) => r.id !== id));
+
+      await load();
       setMsg({ kind: "ok", text: "Papeleta marcada como ATIVA." });
+      setTimeout(() => setMsg(null), 1800);
       setModalAtivarNao({ open: false });
     } catch (e: any) {
       setMsg({ kind: "err", text: e?.message ?? "Falha ao ativar." });
+      setTimeout(() => setMsg(null), 2200);
       setModalAtivarNao((m) => ({ ...m, saving: false }));
     }
   }
+
+  // Evitar whitespace/comentários dentro do <colgroup> (elimina warnings do React)
+  const colWidths = React.useMemo(
+    () => ["w-28", "w-40", "w-[320px]", "w-[300px]", "w-40", "w-28", "w-56", "w-28", "w-40", "w-40"],
+    []
+  );
+  const colEls = React.useMemo(
+    () => colWidths.map((cls, i) => <col key={i} className={cls} />),
+    [colWidths]
+  );
 
   return (
     <div className="rounded-2xl bg-slate-900/50 ring-1 ring-white/10 p-4">
@@ -306,21 +367,9 @@ export default function PendingReconnectionsTable() {
         </div>
       )}
 
-      {/* SCROLL HORIZONTAL + colgroup com larguras base */}
       <div className="rounded-xl overflow-x-auto ring-1 ring-white/10">
         <table className="w-full text-sm table-auto">
-          <colgroup>
-            <col className="w-28" />
-            <col className="w-40" />
-            <col className="w-[320px]" />
-            <col className="w-[300px]" />
-            <col className="w-40" />
-            <col className="w-28" />
-            <col className="w-56" />
-            <col className="w-28" />
-            <col className="w-40" />
-            <col className="w-40" />
-          </colgroup>
+          <colgroup>{colEls}</colgroup>
 
           <thead className="bg-white/5 text-slate-300">
             <tr>
@@ -333,7 +382,7 @@ export default function PendingReconnectionsTable() {
               <th className="text-center font-medium py-2 px-3">Status / Marcar</th>
               <th className="text-center font-medium py-2 px-3">Ordem (PDF)</th>
               <th className="text-center font-medium py-2 px-3">Criado em</th>
-              <th className="text-center font-medium py-2 px-3">Trocar Hidômetro?</th>
+              <th className="text-center font-medium py-2 px-3">Trocar Hidrômetro?</th>
             </tr>
           </thead>
 
@@ -341,52 +390,49 @@ export default function PendingReconnectionsTable() {
             {rows.map((r) => (
               <tr key={r.id} className="bg-slate-950/40 align-middle">
                 <td className="py-2 px-3 font-mono whitespace-nowrap">{r.matricula}</td>
-
                 <td className="py-2 px-3">
-                  <div className="truncate max-w-[160px]" title={r.bairro}>
-                    {r.bairro}
-                  </div>
+                  <div className="truncate max-w-[160px]" title={r.bairro}>{r.bairro}</div>
                 </td>
-
                 <td className="py-2 px-3">
-                  <div className="truncate max-w-[280px]" title={`${r.rua}, ${r.numero}`}>
-                    {r.rua}, {r.numero}
-                  </div>
+                  <div className="truncate max-w-[280px]" title={`${r.rua}, ${r.numero}`}>{r.rua}, {r.numero}</div>
                 </td>
-
                 <td className="py-2 px-3">
-                  <div className="truncate max-w-[260px]" title={r.ponto_referencia || "-"}>
-                    {r.ponto_referencia || "-"}
-                  </div>
+                  <div className="truncate max-w-[260px]" title={r.ponto_referencia || "-"}>{r.ponto_referencia || "-"}</div>
                 </td>
-
                 <td className="py-2 px-3 whitespace-nowrap">{fmtTel(r.telefone)}</td>
-
                 <td className="py-2 px-3">
                   {r.prioridade ? (
-                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-fuchsia-500/20 text-fuchsia-300 ring-1 ring-fuchsia-400/30 whitespace-nowrap">
-                      PRIORIDADE
-                    </span>
+                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-fuchsia-500/20 text-fuchsia-300 ring-1 ring-fuchsia-400/30 whitespace-nowrap">PRIORIDADE</span>
                   ) : (
-                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-slate-500/20 text-slate-300 ring-1 ring-slate-400/30 whitespace-nowrap">
-                      Normal
-                    </span>
+                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-slate-500/20 text-slate-300 ring-1 ring-slate-400/30 whitespace-nowrap">Normal</span>
                   )}
                 </td>
-
                 <td className="py-2 px-3 text-center whitespace-nowrap">
                   <div className="inline-flex items-center gap-2">
                     <StatusBadge status={r.status} />
-                    <button
-                      onClick={() => onClickAtivar(r)}
-                      className="px-3 py-1.5 text-xs rounded-lg bg-emerald-600/20 text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-600/30 whitespace-nowrap"
-                      title="Marcar como ATIVA"
-                    >
-                      Ativar
-                    </button>
+                    {canActivate ? (
+                      <button
+                        onClick={() => onClickAtivar(r)}
+                        className="px-3 py-1.5 text-xs rounded-lg bg-emerald-600/20 text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-600/30 whitespace-nowrap"
+                        title="Marcar como ATIVA"
+                      >
+                        Ativar
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPermText("Apenas TERCEIRIZADA e ADM podem ativar papeletas.");
+                          setPermModalOpen(true);
+                        }}
+                        className="px-3 py-1.5 text-xs rounded-lg bg-emerald-600/10 text-emerald-300 ring-1 ring-emerald-400/20 cursor-not-allowed opacity-75 whitespace-nowrap"
+                        title="Sem permissão"
+                      >
+                        Ativar
+                      </button>
+                    )}
                   </div>
                 </td>
-
                 <td className="py-2 px-3 text-center">{renderImprimirCell(r)}</td>
                 <td className="py-2 px-3 text-center whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
                 <td className="py-2 px-3 text-center">
@@ -406,7 +452,25 @@ export default function PendingReconnectionsTable() {
         </table>
       </div>
 
-      {/* ===== Modais (iguais aos seus) ===== */}
+      {/* Modal de permissão negada */}
+      {permModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-lg text-center">
+            <h3 className="text-lg font-semibold text-white">Permissão necessária</h3>
+            <p className="text-slate-300 text-sm mt-2">{permText}</p>
+            <div className="mt-5">
+              <button
+                onClick={() => setPermModalOpen(false)}
+                className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white text-sm"
+              >
+                Entendi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modais */}
       {modalAtivarSim.open && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-md">
@@ -453,7 +517,7 @@ export default function PendingReconnectionsTable() {
             <h3 className="text-lg font-semibold text-white mb-3">
               Ativar matrícula {modalAtivarNao.matricula}
             </h3>
-            <p className="text-slate-300 text-sm">Não é necessário anexar novo hidrômetro para esta ordem.</p>
+            <p className="text-slate-300 text-sm">Não é necessário informar novo hidrômetro para esta ordem.</p>
             <div className="text-slate-300 text-sm mt-3">
               <div className="font-semibold mb-1">OBSERVAÇÃO:</div>
               <div className="whitespace-pre-wrap">{modalAtivarNao.observacao ? modalAtivarNao.observacao : "—"}</div>
@@ -473,40 +537,6 @@ export default function PendingReconnectionsTable() {
                 disabled={!!modalAtivarNao.saving}
               >
                 {modalAtivarNao.saving ? "Ativando…" : "Ativar"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {modalImprimir.open && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-md text-center">
-            <h3 className="text-lg font-semibold text-white mb-3">
-              Observação da matrícula {modalImprimir.matricula}
-            </h3>
-            <div className="text-slate-300 text-sm mb-4 whitespace-pre-wrap">
-              {modalImprimir.observacao ? modalImprimir.observacao : "—"}
-            </div>
-            <div className="flex justify-center gap-3">
-              <button
-                onClick={() => setModalImprimir({ open: false })}
-                className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200"
-              >
-                Fechar
-              </button>
-              <button
-                onClick={() => {
-                  const url = modalImprimir.pdfUrl || "";
-                  const tel = modalImprimir.telefone || "";
-                  const refe = modalImprimir.pontoRef || "";
-                  setModalImprimir({ open: false });
-                  if (url) openOverlayPrint(url, tel, refe);
-                }}
-                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-60"
-                disabled={!modalImprimir.pdfUrl}
-              >
-                Imprimir com sobreposição
               </button>
             </div>
           </div>

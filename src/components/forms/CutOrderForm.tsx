@@ -3,6 +3,8 @@ import supabase from "../../lib/supabase";
 
 type Msg = { kind: "ok" | "err"; text: string } | null;
 
+const ALLOWED_ROLES = new Set(["ADM", "DIRETOR", "COORDENADOR", "OPERADOR"]);
+
 export default function CutOrderForm() {
   const [matricula, setMatricula] = React.useState("");
   const [os, setOs] = React.useState("");
@@ -23,11 +25,50 @@ export default function CutOrderForm() {
   // modal do tipo do corte
   const [tipoModalOpen, setTipoModalOpen] = React.useState(false);
 
+  // ======= NOVO: papel do usuário e modal de permissão =======
+  const [userRole, setUserRole] = React.useState<string>("VISITANTE");
+  const isAllowed = React.useMemo(
+    () => ALLOWED_ROLES.has((userRole || "VISITANTE").toUpperCase()),
+    [userRole]
+  );
+
+  const [permModalOpen, setPermModalOpen] = React.useState(false);
+  const [permText, setPermText] = React.useState(
+    "Seu perfil não tem permissão para criar ordens de corte. Apenas ADM, DIRETOR, COORDENADOR e OPERADOR podem."
+  );
+  // ===========================================================
+
   React.useEffect(() => {
     if (saving) return;
     const id = setInterval(() => setNow(new Date().toLocaleString("pt-BR")), 1000);
     return () => clearInterval(id);
   }, [saving]);
+
+  // ======= NOVO: buscar papel do usuário logado =======
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const { data: udata, error: uerr } = await supabase.auth.getUser();
+        if (uerr) throw uerr;
+        const user = udata?.user;
+        if (!user) {
+          setUserRole("VISITANTE");
+          return;
+        }
+        const { data, error } = await supabase
+          .from("app_users")
+          .select("papel")
+          .eq("id", user.id)
+          .single();
+        if (error) throw error;
+        setUserRole((data?.papel || "VISITANTE").toUpperCase());
+      } catch {
+        // fallback seguro
+        setUserRole("VISITANTE");
+      }
+    })();
+  }, []);
+  // ===================================================
 
   function clear() {
     setMatricula("");
@@ -117,9 +158,20 @@ export default function CutOrderForm() {
     return null;
   }
 
-  // 1) validar e abrir modal
+  // 1) validar, checar permissão e abrir modal de tipo
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
+
+    // ======= NOVO: checagem de permissão no frontend =======
+    if (!isAllowed) {
+      setPermText(
+        "Seu perfil não tem permissão para criar ordens de corte. Apenas ADM, DIRETOR, COORDENADOR e OPERADOR podem."
+      );
+      setPermModalOpen(true);
+      return;
+    }
+    // =======================================================
+
     const m = formatMatricula();
     const err = validate();
     if (err) {
@@ -136,6 +188,15 @@ export default function CutOrderForm() {
       setTipoModalOpen(false);
       setSaving(true);
       setMsg(null);
+
+      // segurança extra: revalida no momento do envio
+      if (!isAllowed) {
+        setPermText(
+          "Seu perfil não tem permissão para criar ordens de corte. Apenas ADM, DIRETOR, COORDENADOR e OPERADOR podem."
+        );
+        setPermModalOpen(true);
+        return;
+      }
 
       const { data: userData, error: userErr } = await supabase.auth.getUser();
       if (userErr) throw userErr;
@@ -170,12 +231,25 @@ export default function CutOrderForm() {
         pdf_ordem_path: ordemPath,
         corte_na_rua: corteNaRua, // <<< grava aqui
       });
+
       if (insErr) throw insErr;
 
       setMsg({ kind: "ok", text: "OS de corte criada com sucesso!" });
       clear();
     } catch (e: any) {
-      setMsg({ kind: "err", text: e?.message ?? "Falha ao salvar." });
+      const emsg = String(e?.message || "");
+      // ======= NOVO: se RLS/trigger bloquear, avisa em modal amigável =======
+      if (
+        /Impedido|insufficient_privilege|permission|RLS|row-level|policy|denied/i.test(emsg)
+      ) {
+        setPermText(
+          "A operação foi bloqueada pelas regras de segurança. Apenas ADM, DIRETOR, COORDENADOR e OPERADOR podem criar ordens de corte."
+        );
+        setPermModalOpen(true);
+      } else {
+        setMsg({ kind: "err", text: emsg || "Falha ao salvar." });
+      }
+      // ======================================================================
     } finally {
       setSaving(false);
       setTimeout(() => setMsg(null), 2000);
@@ -193,10 +267,10 @@ export default function CutOrderForm() {
         <div className="text-xs text-emerald-300 font-semibold">{now}</div>
       </div>
 
-      {/* Form com seções/hi–erarquia visual */}
+      {/* Form */}
       <form onSubmit={onSave} className="mt-6">
         <div className="space-y-8 divide-y divide-white/10">
-          {/* Seção 1: Identificação */}
+          {/* Identificação */}
           <section className="space-y-4">
             <h3 className="text-sm font-semibold text-slate-300">Identificação</h3>
 
@@ -232,7 +306,7 @@ export default function CutOrderForm() {
             </div>
           </section>
 
-          {/* Seção 2: Endereço */}
+          {/* Endereço */}
           <section className="pt-8 space-y-4">
             <h3 className="text-sm font-semibold text-slate-300">Endereço</h3>
 
@@ -276,7 +350,7 @@ export default function CutOrderForm() {
             </div>
           </section>
 
-          {/* Seção 3: Motivo */}
+          {/* Motivo */}
           <section className="pt-8 space-y-4">
             <h3 className="text-sm font-semibold text-slate-300">Motivo</h3>
 
@@ -309,7 +383,7 @@ export default function CutOrderForm() {
             </div>
           </section>
 
-          {/* Seção 4: Anexos */}
+          {/* Anexos */}
           <section className="pt-8 space-y-4">
             <h3 className="text-sm font-semibold text-slate-300">Anexos</h3>
 
@@ -383,6 +457,25 @@ export default function CutOrderForm() {
           </div>
         </div>
       )}
+
+      {/* ======= NOVO: Modal de permissão negada ======= */}
+      {permModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-lg text-center">
+            <h3 className="text-lg font-semibold text-white">Permissão necessária</h3>
+            <p className="text-slate-300 text-sm mt-2">{permText}</p>
+            <div className="mt-5">
+              <button
+                onClick={() => { clear(); setPermModalOpen(false); }}
+                className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white text-sm"
+              >
+                Entendi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* =============================================== */}
 
       {/* Toast */}
       {msg && (

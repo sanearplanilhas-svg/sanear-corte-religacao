@@ -2,9 +2,42 @@
 <html lang="pt-br">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="manifest" href="/manifest.webmanifest">
-    <meta name="theme-color" content="#0b1220">
+
+    <!-- Viewport com suporte a safe-areas (iOS notch/Dynamic Island) -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
+    />
+
+    <!-- PWA manifest -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- Tema: defina a cor da barra do sistema (Android/Chrome e PWA standalone) -->
+    <!-- Use duas variantes para acompanhar o esquema de cores do SO -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#0b1220" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)"  content="#0b1220" />
+
+    <!-- iOS PWA -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- Opções: default | black | black-translucent.
+         'black-translucent' permite conteúdo sob a status bar (usar env(safe-area-inset-top)). -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Sanear" />
+
+    <!-- Capable em Android (Chrome) -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="application-name" content="Sanear" />
+
+    <!-- Hint de esquemas suportados (Safari) -->
+    <meta name="color-scheme" content="dark light" />
+
+    <!-- Ícones (ajuste os paths conforme seus arquivos gerados) -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-180.png" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/icons/apple-touch-icon-152.png" />
+    <link rel="apple-touch-icon" sizes="120x120" href="/icons/apple-touch-icon-120.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
+
     <title>Sanear- Corte & Religação</title>
   </head>
   <body class="bg-slate-900">

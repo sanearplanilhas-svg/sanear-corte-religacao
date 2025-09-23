@@ -1,19 +1,19 @@
+// src/components/charts/LineChart.tsx
 import React from "react";
 import { motion } from "framer-motion";
 
 /**
  * Gráfico de linha animado (traçado desenhando + área aparecendo)
+ * - svg como block para evitar espaço inline
  */
 export default function LineChart() {
-  // Os mesmos pontos do seu layout
   const points =
     "0,160 60,140 120,180 180,120 240,150 300,90 360,170 420,130 480,190 540,110 600,150";
 
-  // Comprimento aproximado do caminho (suficiente para a animação)
   const pathLength = 800;
 
   return (
-    <svg viewBox="0 0 600 220" className="w-full h-[220px]">
+    <svg viewBox="0 0 600 220" className="block w-full h-[220px]">
       <defs>
         <linearGradient id="grad-line" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="rgb(244,63,94)" stopOpacity="0.5" />
@@ -22,14 +22,7 @@ export default function LineChart() {
       </defs>
 
       {/* fundo sutil */}
-      <rect
-        x="0"
-        y="0"
-        width="600"
-        height="220"
-        fill="url(#grad-line)"
-        opacity="0.06"
-      />
+      <rect x="0" y="0" width="600" height="220" fill="url(#grad-line)" opacity="0.06" />
 
       {/* área: fade + leve slide */}
       <motion.polygon

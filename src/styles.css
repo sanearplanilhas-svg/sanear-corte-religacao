@@ -1,10 +1,31 @@
+/* src/styles.css */
+
+/* Tailwind layers */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Altura total e prevenção de scroll horizontal global */
 html, body, #root { height: 100%; }
+html, body { overflow-x: hidden; }
 
-/* Futuristic grid background */
+/* Safe-area (iOS notch) */
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+}
+
+/* Espaçamento que respeita a safe-area (use em wrappers/topbars se quiser) */
+.safe-padding {
+  padding-top: max(1rem, var(--sat));
+  padding-right: max(1rem, var(--sar));
+  padding-bottom: max(1rem, var(--sab));
+  padding-left: max(1rem, var(--sal));
+}
+
+/* Fundo “grid futurista” (igual ao seu) */
 .grid-bg {
   background-image:
     radial-gradient(ellipse at top, rgba(34,211,238,0.08), transparent 60%),
@@ -14,3 +35,57 @@ html, body, #root { height: 100%; }
   background-size: 100% 100%, 100% 100%, 32px 32px, 32px 32px;
   background-position: center center, center center, center center, center center;
 }
+
+/* ===== Utilitários de texto longo / tabelas ===== */
+
+/* Truncamento em 1 linha (use junto com min-w-0 em grids/flex) */
+.truncate-soft {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Quebra “em qualquer lugar” para evitar vazamento no mobile */
+.break-anywhere {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  hyphens: auto;
+}
+
+/* Clamps multi-linha (p/ cards/células) */
+.clamp-2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2; /* vendor */
+  line-clamp: 2;         /* padrão */
+  overflow: hidden;
+}
+
+.clamp-3 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3; /* vendor */
+  line-clamp: 3;         /* padrão */
+  overflow: hidden;
+}
+
+/* Wrapper de tabela com scroll horizontal suave no mobile */
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.table-wrap > table {
+  min-width: 640px; /* ajuste se precisar */
+}
+
+/* Esconde scrollbar visual mantendo o scroll funcional */
+.no-scrollbar {
+  -ms-overflow-style: none; /* IE/Edge */
+  scrollbar-width: none;    /* Firefox */
+}
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* Opcional: deixar SVGs sem “gap inline” quando usados como gráficos */
+svg.block-svg { display: block; }

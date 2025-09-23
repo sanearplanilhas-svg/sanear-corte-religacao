@@ -1,4 +1,3 @@
-// Definição centralizada das chaves de navegação usadas no Dashboard
 export type NavKey =
   | "dashboard"
   | "corteNew"
@@ -8,4 +7,5 @@ export type NavKey =
   | "ordensAll"
   | "papeletasAll"
   | "relatorios"
-  | "usuarios";
+  | "usuarios"
+  | "historico"; // 👈 adicionado

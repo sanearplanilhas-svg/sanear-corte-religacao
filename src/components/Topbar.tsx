@@ -298,9 +298,20 @@ export default function Topbar() {
     }
   }
 
+  const canPortal = typeof document !== "undefined";
+
   return (
     <>
-      <div className="relative border-b border-white/5 bg-slate-950/60 backdrop-blur">
+      {/* Container com safe-area no iOS */}
+      <div
+        className="relative border-b border-white/5 bg-slate-950/60 backdrop-blur"
+        style={{
+          // Safe-area: notch (top) e laterais (Dynamic Island/curvas)
+          paddingTop: "env(safe-area-inset-top)",
+          paddingLeft: "env(safe-area-inset-left)",
+          paddingRight: "env(safe-area-inset-right)",
+        }}
+      >
         <div className="mx-auto max-w-7xl px-6 py-3 flex items-center justify-between gap-4">
           {/* Busca */}
           <div className="flex items-center gap-2">
@@ -352,16 +363,15 @@ export default function Topbar() {
               <span>Congelar tela</span>
             </button>
 
-           <button
-  type="button"
-  onClick={onSignOut}
-  className="px-4 py-2.5 rounded-lg bg-rose-600/20 text-rose-300 ring-1 ring-rose-400/40 hover:bg-rose-600/30 flex items-center gap-2"
-  title="Sair do sistema"
->
-  <LogOut className="h-4 w-4" />
-  <span>Sair</span>
-</button>
-
+            <button
+              type="button"
+              onClick={onSignOut}
+              className="px-4 py-2.5 rounded-lg bg-rose-600/20 text-rose-300 ring-1 ring-rose-400/40 hover:bg-rose-600/30 flex items-center gap-2"
+              title="Sair do sistema"
+            >
+              <LogOut className="h-4 w-4" />
+              <span>Sair</span>
+            </button>
           </div>
         </div>
 
@@ -428,7 +438,7 @@ export default function Topbar() {
       </div>
 
       {/* MODAL do Congelar */}
-      {locked && isAuthed && createPortal(
+      {canPortal && locked && isAuthed && createPortal(
         <div
           key={lockNonce}
           className="fixed inset-0 z-[2147483647]"

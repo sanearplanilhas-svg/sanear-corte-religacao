@@ -17,6 +17,9 @@ type CorteRow = {
 
 const fmt = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR") : "—");
 
+// >>> NOVO: perfis autorizados a marcar CORTADA
+const ALLOWED_CUT = new Set(["ADM", "TERCEIRIZADA"]);
+
 export default function PendingCutsTable() {
   const [rows, setRows] = React.useState<CorteRow[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -28,12 +31,52 @@ export default function PendingCutsTable() {
     endDate: null,
   });
 
+  // >>> NOVO: papel do usuário + modal de permissão
+  const [userRole, setUserRole] = React.useState<string>("VISITANTE");
+  const canCut = React.useMemo(
+    () => ALLOWED_CUT.has((userRole || "VISITANTE").toUpperCase()),
+    [userRole]
+  );
+
+  const [permModalOpen, setPermModalOpen] = React.useState(false);
+  const [permText, setPermText] = React.useState(
+    "Apenas TERCEIRIZADA e ADM podem marcar como CORTADA."
+  );
+  // <<<
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const { data: udata, error: uerr } = await supabase.auth.getUser();
+        if (uerr) throw uerr;
+        // Narrowing seguro para evitar TS2532
+        const user = (udata && "user" in udata ? (udata as any).user : undefined) as
+          | { id: string }
+          | undefined;
+        if (!user) {
+          setUserRole("VISITANTE");
+          return;
+        }
+        const { data, error } = await supabase
+          .from("app_users")
+          .select("papel")
+          .eq("id", user.id)
+          .single();
+        if (error) throw error;
+        setUserRole((data?.papel || "VISITANTE").toUpperCase());
+      } catch {
+        setUserRole("VISITANTE");
+      }
+    })();
+  }, []);
+
   function buildQuery() {
     let query = supabase
       .from("ordens_corte")
       .select(
         "id, matricula, bairro, rua, numero, ponto_referencia, status, pdf_ordem_path, created_at, corte_na_rua"
       )
+      // duas formas de encontrar "aguardando corte"
       .or(["status.eq.aguardando_corte", "status.ilike.%aguardando corte%"].join(","));
 
     if (filter.startDate) query = query.gte("created_at", `${filter.startDate}T00:00:00`);
@@ -53,6 +96,8 @@ export default function PendingCutsTable() {
     if (error) {
       setMsg({ kind: "err", text: error.message });
       setLoading(false);
+      // limpa snackbar após um tempo
+      setTimeout(() => setMsg(null), 2200);
       return;
     }
     setRows(((data ?? []) as unknown) as CorteRow[]);
@@ -69,11 +114,30 @@ export default function PendingCutsTable() {
   }
 
   async function marcarCortada(id: string) {
+    // >>> NOVO: guarda de permissão
+    if (!canCut) {
+      setPermText("Apenas TERCEIRIZADA e ADM podem marcar como CORTADA.");
+      setPermModalOpen(true);
+      return;
+    }
+    // <<<
+
     const { error } = await supabase.from("ordens_corte").update({ status: "cortada" }).eq("id", id);
-    if (error) return setMsg({ kind: "err", text: `Falha ao atualizar: ${error.message}` });
+    if (error) {
+      // Se o backend/trigger bloquear, mostra erro amigável
+      if (/Impedido|insufficient_privilege|permission|RLS|row-level|policy|denied/i.test(error.message)) {
+        setPermText("A operação foi bloqueada pelas regras de segurança.");
+        setPermModalOpen(true);
+        return;
+      }
+      setMsg({ kind: "err", text: `Falha ao atualizar: ${error.message}` });
+      setTimeout(() => setMsg(null), 2200);
+      return;
+    }
 
     setRows((prev) => prev.filter((r) => r.id !== id));
     setMsg({ kind: "ok", text: "Papeleta marcada como CORTADA." });
+    setTimeout(() => setMsg(null), 1800);
   }
 
   function renderImprimirCell(row: CorteRow) {
@@ -110,6 +174,16 @@ export default function PendingCutsTable() {
     }
     return "—";
   }
+
+  // ❗ Evita comentários/whitespace dentro do <colgroup> (elimina warnings do React)
+  const colWidths = React.useMemo(
+    () => ["w-28", "w-48", "w-[340px]", "w-[320px]", "w-56", "w-28", "w-40", "w-36"],
+    []
+  );
+  const colEls = React.useMemo(
+    () => colWidths.map((cls, i) => <col key={i} className={cls} />),
+    [colWidths]
+  );
 
   return (
     <div className="rounded-2xl bg-slate-900/50 ring-1 ring-white/10 p-4">
@@ -149,16 +223,7 @@ export default function PendingCutsTable() {
       {/* SCROLL HORIZONTAL + colgroup com larguras base */}
       <div className="rounded-xl overflow-x-auto ring-1 ring-white/10">
         <table className="w-full text-sm table-auto">
-          <colgroup>
-            <col className="w-28" />  {/* matrícula */}
-            <col className="w-48" />  {/* bairro */}
-            <col className="w-[340px]" /> {/* rua e nº */}
-            <col className="w-[320px]" /> {/* ponto ref */}
-            <col className="w-56" />  {/* status/marcar */}
-            <col className="w-28" />  {/* pdf */}
-            <col className="w-40" />  {/* criado em */}
-            <col className="w-36" />  {/* corte na rua */}
-          </colgroup>
+          <colgroup>{colEls}</colgroup>
 
           <thead className="bg-white/5 text-slate-300">
             <tr>
@@ -201,12 +266,27 @@ export default function PendingCutsTable() {
                     <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-amber-500/20 text-amber-300 ring-1 ring-amber-400/30 whitespace-nowrap">
                       Aguardando Corte
                     </span>
-                    <button
-                      onClick={() => marcarCortada(r.id)}
-                      className="px-3 py-1.5 text-xs rounded-lg bg-rose-500/20 text-rose-200 ring-1 ring-rose-400/40 hover:bg-rose-500/30 whitespace-nowrap"
-                    >
-                      Cortar
-                    </button>
+
+                    {canCut ? (
+                      <button
+                        onClick={() => marcarCortada(r.id)}
+                        className="px-3 py-1.5 text-xs rounded-lg bg-rose-500/20 text-rose-200 ring-1 ring-rose-400/40 hover:bg-rose-500/30 whitespace-nowrap"
+                      >
+                        Cortar
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPermText("Apenas TERCEIRIZADA e ADM podem marcar como CORTADA.");
+                          setPermModalOpen(true);
+                        }}
+                        className="px-3 py-1.5 text-xs rounded-lg bg-rose-500/10 text-rose-300 ring-1 ring-rose-400/20 cursor-not-allowed opacity-75 whitespace-nowrap"
+                        title="Sem permissão"
+                      >
+                        Cortar
+                      </button>
+                    )}
                   </div>
                 </td>
 
@@ -228,6 +308,24 @@ export default function PendingCutsTable() {
           </tbody>
         </table>
       </div>
+
+      {/* Modal de permissão negada */}
+      {permModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-lg text-center">
+            <h3 className="text-lg font-semibold text-white">Permissão necessária</h3>
+            <p className="text-slate-300 text-sm mt-2">{permText}</p>
+            <div className="mt-5">
+              <button
+                onClick={() => setPermModalOpen(false)}
+                className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white text-sm"
+              >
+                Entendi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

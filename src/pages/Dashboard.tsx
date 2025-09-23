@@ -1,7 +1,7 @@
 // src/pages/Dashboard.tsx
 import React, { useEffect, useState } from "react";
 import type { NavKey } from "../types/nav";
-import { supabase } from "../lib/supabase";
+import supabase from "../lib/supabase"; // ✅ default import (igual aos outros arquivos)
 
 import Sidebar from "../components/Sidebar";
 import Topbar from "../components/Topbar";
@@ -19,6 +19,8 @@ import AllReconnectionsTable from "../components/tables/AllReconnectionsTable";
 import UsersPage from "./UsersPage";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 
+type BairroRow = { id: number; bairro: string };
+
 export default function Dashboard() {
   const [active, setActive] = useState<NavKey>("dashboard");
 
@@ -34,11 +36,11 @@ export default function Dashboard() {
   const [allDates, setAllDates] = useState(true);
 
   // Bairros
-  const [bairros, setBairros] = useState<{ id: string; bairro: string }[]>([]);
+  const [bairros, setBairros] = useState<BairroRow[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [novoBairro, setNovoBairro] = useState("");
   const [deleteMode, setDeleteMode] = useState(false);
-  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [selecionados, setSelecionados] = useState<Set<number>>(new Set());
 
   // ---------- helpers ----------
   const norm = (s?: string | null) =>
@@ -63,6 +65,15 @@ export default function Dashboard() {
   const TXT_CORTADA = new Set(["cortada"]);
   const TXT_ATIVA = new Set(["ativa"]);
 
+  const withDayBounds = (start?: string, end?: string) => {
+    if (!start || !end) return { gte: undefined, lte: undefined };
+    return {
+      gte: `${start}T00:00:00`,
+      lte: `${end}T23:59:59`,
+    };
+  };
+
+  // Conta no cliente (robusto à ausência de status_id)
   const countRobusto = async ({
     table,
     statusId,
@@ -79,15 +90,16 @@ export default function Dashboard() {
     try {
       let query = supabase.from(table).select("id,status_id,status,created_at");
       if (!allDates && start && end) {
-        query = query.gte("created_at", start).lte("created_at", end);
+        const { gte, lte } = withDayBounds(start, end);
+        if (gte && lte) query = query.gte("created_at", gte).lte("created_at", lte);
       }
       const { data, error } = await query;
       if (error) throw error;
 
       let total = 0;
-      for (const r of data ?? []) {
-        const sid = (r as any).status_id as number | null;
-        const st = norm((r as any).status as string | null);
+      for (const r of (data ?? []) as any[]) {
+        const sid = r.status_id as number | null;
+        const st = norm(r.status as string | null);
         if (sid === statusId || textoSet.has(st)) total++;
       }
       return total;
@@ -142,37 +154,63 @@ export default function Dashboard() {
   const fetchBairros = async () => {
     const { data, error } = await supabase
       .from("avisos_bairros")
-      .select("*")
+      .select("id,bairro,created_at")
       .order("created_at", { ascending: false });
-    if (!error && data) setBairros(data);
+    if (error) {
+      console.error("Erro ao carregar bairros:", error.message);
+      return;
+    }
+    // normaliza: id como number
+    setBairros(
+      (data ?? []).map((r: any) => ({ id: Number(r.id), bairro: r.bairro })) as BairroRow[]
+    );
   };
 
   const salvarBairro = async () => {
     const bairrosLista = novoBairro
-      .split("\n")
+      .split(/\r?\n/)
       .map((b) => b.trim().toUpperCase())
       .filter((b) => b.length > 0);
 
+    if (bairrosLista.length === 0) {
+      setShowModal(false);
+      return;
+    }
+
+    const payload = bairrosLista.map((b) => ({ bairro: b }));
+
+    // ✅ usar INSERT na VIEW (o trigger faz upsert na tabela base e bloqueia visitante)
     const { data, error } = await supabase
       .from("avisos_bairros")
-      .insert(bairrosLista.map((b) => ({ bairro: b })))
-      .select();
+      .insert(payload)
+      .select("id,bairro,created_at");
 
-    if (!error && data) {
-      setBairros([...data, ...bairros]);
-      setShowModal(false);
-      setNovoBairro("");
+    if (error) {
+      console.error("Erro ao salvar bairros:", error.message);
+      return;
     }
+
+    // recarrega da fonte para evitar duplicatas
+    await fetchBairros();
+    setShowModal(false);
+    setNovoBairro("");
   };
 
   const excluirBairros = async () => {
     const ids = Array.from(selecionados);
-    const { error } = await supabase.from("avisos_bairros").delete().in("id", ids);
-    if (!error) {
-      setBairros(bairros.filter((b) => !selecionados.has(b.id)));
-      setSelecionados(new Set());
+    if (ids.length === 0) {
       setDeleteMode(false);
+      return;
     }
+    const { error } = await supabase.from("avisos_bairros").delete().in("id", ids);
+    if (error) {
+      console.error("Erro ao excluir bairros:", error.message);
+      return;
+    }
+    // atualiza local
+    setBairros((prev) => prev.filter((b) => !selecionados.has(b.id)));
+    setSelecionados(new Set());
+    setDeleteMode(false);
   };
 
   useEffect(() => {
@@ -180,17 +218,15 @@ export default function Dashboard() {
     fetchBairros();
   }, [dateStart, dateEnd, allDates]);
 
-  // 🔁 Auto-refresh a cada 2s (mantém o botão Filtro)
+  // 🔁 Auto-refresh a cada 2s
   useEffect(() => {
     const id = window.setInterval(() => {
       fetchCounts();
       fetchBairros();
     }, 2000);
     return () => window.clearInterval(id);
-    // depende dos filtros para recarregar corretamente ao mudar o intervalo
   }, [dateStart, dateEnd, allDates]);
 
-  // ---------- componente interno ----------
   function BigStat({
     title,
     value,
@@ -219,7 +255,6 @@ export default function Dashboard() {
     );
   }
 
-  // ---------- UI ----------
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       {/* Sidebar fixa */}
@@ -250,7 +285,6 @@ export default function Dashboard() {
                       >
                         Filtro
                       </button>
-                      {/* Botão Atualizar removido — agora atualiza automaticamente a cada 2s */}
                     </div>
                   </div>
 
@@ -409,7 +443,7 @@ export default function Dashboard() {
               {active === "cortePend" && (
                 <>
                   <h1 className="text-2xl">Cortes pendentes</h1>
-                <PendingCutsTable />
+                  <PendingCutsTable />
                 </>
               )}
 
