@@ -12,33 +12,31 @@
     <!-- PWA manifest -->
     <link rel="manifest" href="/manifest.webmanifest" />
 
-    <!-- Tema: defina a cor da barra do sistema (Android/Chrome e PWA standalone) -->
-    <!-- Use duas variantes para acompanhar o esquema de cores do SO -->
+    <!-- Cor da barra do sistema (respeita light/dark) -->
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#0b1220" />
     <meta name="theme-color" media="(prefers-color-scheme: dark)"  content="#0b1220" />
 
     <!-- iOS PWA -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <!-- Opções: default | black | black-translucent.
-         'black-translucent' permite conteúdo sob a status bar (usar env(safe-area-inset-top)). -->
+    <!-- Opções: default | black | black-translucent -->
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Sanear" />
+    <meta name="apple-mobile-web-app-title" content="SANEAR" />
 
-    <!-- Capable em Android (Chrome) -->
+    <!-- Android (Chrome) -->
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="application-name" content="Sanear" />
+    <meta name="application-name" content="SANEAR" />
 
-    <!-- Hint de esquemas suportados (Safari) -->
+    <!-- Preferências de esquema de cor -->
     <meta name="color-scheme" content="dark light" />
 
-    <!-- Ícones (ajuste os paths conforme seus arquivos gerados) -->
-    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-180.png" />
-    <link rel="apple-touch-icon" sizes="152x152" href="/icons/apple-touch-icon-152.png" />
-    <link rel="apple-touch-icon" sizes="120x120" href="/icons/apple-touch-icon-120.png" />
-    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
-    <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
+    <!-- Ícones -->
+    <!-- iOS usa apple-touch-icon; pode reaproveitar o 512 (o iOS redimensiona para 180) -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-512-v3.png" />
+    <!-- Favicon/Atalhos Android -->
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192-v3.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512-v3.png" />
 
-    <title>Sanear- Corte & Religação</title>
+    <title>SANEAR - Corte & Religação</title>
   </head>
   <body class="bg-slate-900">
     <div id="root"></div>
