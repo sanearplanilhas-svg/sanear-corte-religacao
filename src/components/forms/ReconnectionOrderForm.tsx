@@ -31,6 +31,10 @@ export default function ReconnectionOrderForm() {
   const toUpper = (s: string) => (s ?? "").toUpperCase();
   const onlyDigits = (s: string) => (s ?? "").replace(/\D/g, "");
 
+  // === NOVO: Solicitante
+  const [solicitanteNome, setSolicitanteNome] = React.useState("");
+  const [solicitanteDocumento, setSolicitanteDocumento] = React.useState("");
+
   // estado — papeleta
   const [matricula, setMatricula] = React.useState("");
   const [telefone, setTelefone] = React.useState("");
@@ -171,6 +175,9 @@ export default function ReconnectionOrderForm() {
     setPdfComprovante(null);
     setObservacaoOpt("");
     setObservacaoOutros("");
+    // limpar solicitante
+    setSolicitanteNome("");
+    setSolicitanteDocumento("");
   }
 
   // matrícula
@@ -259,6 +266,10 @@ export default function ReconnectionOrderForm() {
   }
 
   function validatePapeleta(): string | null {
+    // === obrigatórios do solicitante
+    if (!solicitanteNome.trim()) return "Informe o nome do solicitante.";
+    if (!solicitanteDocumento.trim()) return "Informe o documento do solicitante.";
+
     if (!matricula.trim()) return "Informe a matrícula.";
     if (!telefone.trim()) return "Informe o telefone de contato.";
     // ✅ valida exatamente como o CHECK do banco (após sanitizar)
@@ -315,11 +326,15 @@ export default function ReconnectionOrderForm() {
       // ✅ telefone sanitizado para obedecer o CHECK
       const telefoneDb = phoneClean(telefone);
 
-      // INSERT único com os paths
+      // INSERT único com os paths + NOVOS CAMPOS (solicitante)
       const { error: insErr } = await supabase.from("ordens_religacao").insert({
         id,
+        // --- solicitante
+        solicitante_nome: toUpper(solicitanteNome.trim()),
+        solicitante_documento: toUpper(solicitanteDocumento.trim()),
+        // --- demais campos
         matricula: matricula.trim(),
-        telefone: telefoneDb, // ✅ agora obedece ao CHECK
+        telefone: telefoneDb,
         bairro: bairro.trim(),
         rua: rua.trim(),
         numero: numero.trim(),
@@ -569,6 +584,44 @@ export default function ReconnectionOrderForm() {
                   <p className="mt-2 text-[12px] leading-snug text-slate-400">
                     Use somente em casos excepcionais, com autorização do Diretor.
                   </p>
+                </div>
+              </div>
+            </section>
+
+            {/* === NOVA Seção 1.1: Solicitante === */}
+            <section className="pt-8 space-y-4">
+              <h3 className="text-sm font-semibold text-slate-300">Solicitante</h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1">Nome do solicitante *</label>
+                  <input
+                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                    placeholder="EX.: JOÃO DA SILVA"
+                    value={solicitanteNome}
+                    onChange={(e) => setSolicitanteNome(toUpper(e.target.value))}
+                    onPaste={(e: React.ClipboardEvent<HTMLInputElement>) => {
+                      e.preventDefault();
+                      setSolicitanteNome(toUpper(e.clipboardData?.getData("text") || ""));
+                    }}
+                    autoCapitalize="characters"
+                    autoCorrect="off"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1">Documento do solicitante *</label>
+                  <input
+                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                    placeholder="EX.: CPF/CNPJ/IDENTIDADE"
+                    value={solicitanteDocumento}
+                    onChange={(e) => setSolicitanteDocumento(toUpper(e.target.value))}
+                    onPaste={(e: React.ClipboardEvent<HTMLInputElement>) => {
+                      e.preventDefault();
+                      setSolicitanteDocumento(toUpper(e.clipboardData?.getData("text") || ""));
+                    }}
+                    autoCapitalize="characters"
+                    autoCorrect="off"
+                  />
                 </div>
               </div>
             </section>

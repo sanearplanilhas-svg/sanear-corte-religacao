@@ -15,6 +15,8 @@ type ReligRow = {
   ativa_em: string | null;
   created_at: string;
   observacao?: string | null;
+  solicitante_nome?: string | null;
+  solicitante_documento?: string | null;
 };
 
 const norm = (s?: string | null) =>
@@ -55,7 +57,6 @@ function StatusBadge({ status }: { status: string }) {
 
 type StatusFilter = "all" | "liberacao_pendente" | "aguardando" | "ativa";
 
-// Papéis que podem excluir
 const ALLOWED_DELETE = new Set(["ADM", "DIRETOR", "COORDENADOR"]);
 
 export default function AllReconnectionsTable() {
@@ -67,14 +68,12 @@ export default function AllReconnectionsTable() {
   const [statusFilter, setStatusFilter] = React.useState<StatusFilter>("all");
   const [over24h, setOver24h] = React.useState(false);
 
-  // Papel do usuário e permissão de exclusão
   const [userRole, setUserRole] = React.useState<string>("VISITANTE");
   const canDelete = React.useMemo(
     () => ALLOWED_DELETE.has((userRole || "VISITANTE").toUpperCase()),
     [userRole]
   );
 
-  // Modal de permissão negada (UI)
   const [permModalOpen, setPermModalOpen] = React.useState(false);
   const [permText, setPermText] = React.useState("Apenas ADM, DIRETOR e COORDENADOR podem excluir papeletas.");
 
@@ -83,10 +82,7 @@ export default function AllReconnectionsTable() {
       try {
         const { data: udata, error: uerr } = await supabase.auth.getUser();
         if (uerr) throw uerr;
-        // narrowing seguro para evitar TS2532
-        const user = (udata && "user" in udata ? (udata as any).user : undefined) as
-          | { id: string }
-          | undefined;
+        const user = (udata && "user" in udata ? (udata as any).user : undefined) as { id: string } | undefined;
         if (!user) {
           setUserRole("VISITANTE");
           return;
@@ -122,7 +118,22 @@ export default function AllReconnectionsTable() {
     let query = supabase
       .from("ordens_religacao")
       .select(
-        "id, matricula, bairro, rua, numero, ponto_referencia, prioridade, status, pdf_ordem_path, ativa_em, created_at, observacao"
+        [
+          "id",
+          "matricula",
+          "bairro",
+          "rua",
+          "numero",
+          "ponto_referencia",
+          "prioridade",
+          "status",
+          "pdf_ordem_path",
+          "ativa_em",
+          "created_at",
+          "observacao",
+          "solicitante_nome",
+          "solicitante_documento",
+        ].join(", ")
       );
 
     if ((filter.q || "").trim() !== "") {
@@ -147,7 +158,6 @@ export default function AllReconnectionsTable() {
     } else {
       setRows(((data || []) as unknown) as ReligRow[]);
     }
-
     setLoading(false);
   }
 
@@ -164,7 +174,6 @@ export default function AllReconnectionsTable() {
     setFilter({ q: "", startDate: null, endDate: null });
   }
 
-  // Guarda ao alternar modo de exclusão
   function guardedToggleDeleteMode() {
     if (!canDelete) {
       setPermText("Apenas ADM, DIRETOR e COORDENADOR podem excluir papeletas.");
@@ -175,7 +184,6 @@ export default function AllReconnectionsTable() {
     setSelectedIds(new Set());
   }
 
-  // Exclusão com guarda + tratamento de RLS
   async function handleBulkDelete() {
     if (!canDelete) {
       setPermText("Apenas ADM, DIRETOR e COORDENADOR podem excluir papeletas.");
@@ -218,13 +226,17 @@ export default function AllReconnectionsTable() {
     });
   }, [rows, statusFilter]);
 
-  // Bloqueio de impressão quando liberação pendente
   const [modalBloqueio, setModalBloqueio] = React.useState<{ open: boolean; matricula?: string }>({
     open: false,
   });
 
-  // Modal Observação
-  const [modalObs, setModalObs] = React.useState<{ open: boolean; matricula?: string; obs?: string | null }>({
+  const [modalObs, setModalObs] = React.useState<{
+    open: boolean;
+    matricula?: string;
+    obs?: string | null;
+    solicitanteNome?: string | null;
+    solicitanteDoc?: string | null;
+  }>({
     open: false,
   });
 
@@ -269,7 +281,6 @@ export default function AllReconnectionsTable() {
     );
   }
 
-  // Evita warnings do React com comentários/whitespace dentro de <colgroup>
   const colWidths = React.useMemo(() => {
     const arr: string[] = [];
     if (deleteMode) arr.push("w-10");
@@ -289,10 +300,7 @@ export default function AllReconnectionsTable() {
     return arr;
   }, [deleteMode]);
 
-  const colEls = React.useMemo(
-    () => colWidths.map((cls, i) => <col key={i} className={cls} />),
-    [colWidths]
-  );
+  const colEls = React.useMemo(() => colWidths.map((cls, i) => <col key={i} className={cls} />), [colWidths]);
 
   return (
     <div className="rounded-2xl bg-slate-900/50 ring-1 ring-white/10 p-4">
@@ -381,11 +389,14 @@ export default function AllReconnectionsTable() {
         </div>
       )}
 
-      <div className="rounded-xl overflow-x-auto ring-1 ring-white/10">
-        <table className="w-full text-sm table-auto">
+      {/* Container com rolagem vertical e horizontal */}
+      <div className="rounded-xl ring-1 ring-white/10 max-h-[60vh] overflow-x-auto overflow-y-auto">
+        {/* Tabela com largura mínima para habilitar scroll horizontal */}
+        <table className="min-w-[1200px] w-max text-sm table-auto">
           <colgroup>{colEls}</colgroup>
 
-          <thead className="bg-white/5 text-slate-300">
+          {/* Cabeçalho fixo durante o scroll vertical */}
+          <thead className="bg-white/5 text-slate-300 sticky top-0 z-10 backdrop-blur supports-backdrop-blur:bg-white/5">
             <tr>
               {deleteMode && <th className="py-2 px-3" />}
               <th className="text-left font-medium py-2 px-3">Matrícula</th>
@@ -463,7 +474,13 @@ export default function AllReconnectionsTable() {
                     <button
                       type="button"
                       onClick={() =>
-                        setModalObs({ open: true, matricula: r.matricula, obs: r.observacao ?? "-" })
+                        setModalObs({
+                          open: true,
+                          matricula: r.matricula,
+                          obs: r.observacao ?? "-",
+                          solicitanteNome: r.solicitante_nome ?? null,
+                          solicitanteDoc: r.solicitante_documento ?? null,
+                        })
                       }
                       className="px-2 py-1 text-xs rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 whitespace-nowrap"
                       title="Ver observação"
@@ -510,14 +527,31 @@ export default function AllReconnectionsTable() {
 
       {modalObs.open && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-sm">
-            <h3 className="text-lg font-semibold text-white mb-3">
+          <div className="bg-slate-800 p-6 rounded-xl shadow-2xl w-[95vw] max-w-3xl">
+            <h3 className="text-xl font-semibold text-white mb-4">
               Observação — Matrícula {modalObs.matricula}
             </h3>
-            <div className="text-slate-300 text-sm whitespace-pre-wrap">
+
+            {/* Bloco “Solicitado por” com Nome e Documento */}
+            <div className="mb-4 rounded-lg border border-white/10 bg-white/5 p-3">
+              <div className="text-slate-300 text-sm font-medium">Solicitado por</div>
+              <div className="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div className="text-slate-200 text-sm">
+                  <span className="text-slate-400">Nome: </span>
+                  {modalObs.solicitanteNome && modalObs.solicitanteNome.trim() !== "" ? modalObs.solicitanteNome : "—"}
+                </div>
+                <div className="text-slate-200 text-sm">
+                  <span className="text-slate-400">Documento: </span>
+                  {modalObs.solicitanteDoc && modalObs.solicitanteDoc.trim() !== "" ? modalObs.solicitanteDoc : "—"}
+                </div>
+              </div>
+            </div>
+
+            <div className="text-slate-300 text-base whitespace-pre-wrap break-words max-h-[65vh] overflow-auto pr-1">
               {modalObs.obs && modalObs.obs.trim() !== "" ? modalObs.obs : "-"}
             </div>
-            <div className="mt-5 text-center">
+
+            <div className="mt-6 text-center">
               <button
                 onClick={() => setModalObs({ open: false })}
                 className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white"
@@ -529,7 +563,6 @@ export default function AllReconnectionsTable() {
         </div>
       )}
 
-      {/* Modal de permissão negada */}
       {permModalOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-lg text-center">

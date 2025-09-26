@@ -62,6 +62,9 @@ function HidrometroBadge({ value }: { value: boolean | null }) {
 
 // ===== Perfis autorizados a ATIVAR
 const ALLOWED_ACTIVATE = new Set(["ADM", "TERCEIRIZADA"]);
+const SENHA_DIRETOR = "29101993";
+
+type EditField = "bairro" | "rua_numero" | "ponto_referencia" | "telefone";
 
 export default function PendingReconnectionsTable() {
   const [rows, setRows] = React.useState<PendRow[]>([]);
@@ -70,10 +73,21 @@ export default function PendingReconnectionsTable() {
 
   const [filter, setFilter] = React.useState<ListFilter>({ q: "", startDate: null, endDate: null });
 
+  // +24h
+  const [over24h, setOver24h] = React.useState(false);
+
+  // edição inline (um campo por vez)
+  const [editing, setEditing] = React.useState<
+    | { id: string; field: "bairro" | "ponto_referencia" | "telefone"; value: string }
+    | { id: string; field: "rua_numero"; value: string; value2: string }
+    | null
+  >(null);
+  const [savingCell, setSavingCell] = React.useState(false);
+
   const fmtDateTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR") : "—");
   const fmtTel = (t?: string | null) => (t && t.trim() ? t : "—");
 
-  // ===== Papel do usuário e checagem de permissão
+  // ===== Papel do usuário e checagem de permissão (para ativar)
   const [userRole, setUserRole] = React.useState<string>("VISITANTE");
   const canActivate = React.useMemo(
     () => ALLOWED_ACTIVATE.has((userRole || "VISITANTE").toUpperCase()),
@@ -88,10 +102,7 @@ export default function PendingReconnectionsTable() {
       try {
         const { data: udata, error: uerr } = await supabase.auth.getUser();
         if (uerr) throw uerr;
-        // Narrowing seguro para evitar TS2532
-        const user = (udata && "user" in udata ? (udata as any).user : undefined) as
-          | { id: string }
-          | undefined;
+        const user = (udata && "user" in udata ? (udata as any).user : undefined) as { id: string } | undefined;
         if (!user) {
           setUserRole("VISITANTE");
           return;
@@ -136,6 +147,7 @@ export default function PendingReconnectionsTable() {
         )
         .eq("status", "aguardando_religacao");
 
+      // Busca rápida
       if (filter.q.trim() !== "") {
         const q = filter.q.trim();
         query = query.or(
@@ -143,8 +155,14 @@ export default function PendingReconnectionsTable() {
         );
       }
 
-      if (filter.startDate) query = query.gte("created_at", `${filter.startDate}T00:00:00`);
-      if (filter.endDate) query = query.lte("created_at", `${filter.endDate}T23:59:59`);
+      // +24h OU intervalo de datas (mutuamente exclusivos)
+      if (over24h) {
+        const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        query = query.lte("created_at", cutoff);
+      } else {
+        if (filter.startDate) query = query.gte("created_at", `${filter.startDate}T00:00:00`);
+        if (filter.endDate) query = query.lte("created_at", `${filter.endDate}T23:59:59`);
+      }
 
       query = query.order("created_at", { ascending: false });
 
@@ -166,8 +184,73 @@ export default function PendingReconnectionsTable() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Recarrega quando alterna +24h
+  React.useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [over24h]);
+
   function clearFilters() {
     setFilter({ q: "", startDate: null, endDate: null });
+  }
+
+  // ====== Helpers edição ======
+  function startEdit(row: PendRow, field: EditField) {
+    if (field === "rua_numero") {
+      setEditing({ id: row.id, field: "rua_numero", value: row.rua, value2: row.numero });
+    } else if (field === "bairro") {
+      setEditing({ id: row.id, field: "bairro", value: row.bairro });
+    } else if (field === "ponto_referencia") {
+      setEditing({ id: row.id, field: "ponto_referencia", value: (row.ponto_referencia ?? "") });
+    } else if (field === "telefone") {
+      setEditing({ id: row.id, field: "telefone", value: (row.telefone ?? "") });
+    }
+  }
+
+  async function saveEdit() {
+    if (!editing || savingCell) return;
+    setSavingCell(true);
+
+    try {
+      const id = editing.id;
+
+      if (editing.field === "rua_numero") {
+        const rua = (editing.value || "").toUpperCase().trim();
+        const numero = (editing.value2 || "").toUpperCase().trim();
+        const { error } = await supabase.from("ordens_religacao").update({ rua, numero }).eq("id", id);
+        if (error) throw error;
+        setRows((prev) =>
+          prev.map((r) => (r.id === id ? { ...r, rua, numero } : r))
+        );
+        setMsg({ kind: "ok", text: "Rua e número atualizados." });
+      } else {
+        const field = editing.field;
+        const value = (editing.value || "").toUpperCase();
+        const patch: any = { [field]: value };
+        const { error } = await supabase.from("ordens_religacao").update(patch).eq("id", id);
+        if (error) throw error;
+        setRows((prev) =>
+          prev.map((r) => (r.id === id ? { ...r, [field]: value } as PendRow : r))
+        );
+        setMsg({ kind: "ok", text: "Dados atualizados." });
+      }
+      setTimeout(() => setMsg(null), 1500);
+      setEditing(null);
+    } catch (e: any) {
+      setMsg({ kind: "err", text: e?.message ?? "Falha ao salvar." });
+      setTimeout(() => setMsg(null), 2200);
+    } finally {
+      setSavingCell(false);
+    }
+  }
+
+  function onCellKeyDown(e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveEdit();
+    } else if (e.key === "Escape") {
+      setEditing(null);
+    }
   }
 
   // ====== IMPRESSÃO (abre PDF direto) ======
@@ -322,6 +405,34 @@ export default function PendingReconnectionsTable() {
     }
   }
 
+  // ====== PRIORIDADE (toggle com senha por duplo-clique) ======
+  const [modalPrioridade, setModalPrioridade] = React.useState<{ open: boolean; id?: string; atual?: boolean; senha?: string; saving?: boolean }>({ open: false });
+  function onDblClickPrioridade(row: PendRow) {
+    setModalPrioridade({ open: true, id: row.id, atual: row.prioridade, senha: "", saving: false });
+  }
+  async function confirmarPrioridade() {
+    if (!modalPrioridade.open || !modalPrioridade.id) return;
+    if ((modalPrioridade.senha || "") !== SENHA_DIRETOR) {
+      setMsg({ kind: "err", text: "Senha inválida." });
+      setTimeout(() => setMsg(null), 1500);
+      return;
+    }
+    try {
+      setModalPrioridade((m) => ({ ...m, saving: true }));
+      const novo = !modalPrioridade.atual;
+      const { error } = await supabase.from("ordens_religacao").update({ prioridade: novo }).eq("id", modalPrioridade.id);
+      if (error) throw error;
+      setRows((prev) => prev.map((r) => (r.id === modalPrioridade.id ? { ...r, prioridade: novo } : r)));
+      setMsg({ kind: "ok", text: "Prioridade atualizada." });
+      setTimeout(() => setMsg(null), 1500);
+      setModalPrioridade({ open: false });
+    } catch (e: any) {
+      setMsg({ kind: "err", text: e?.message ?? "Falha ao atualizar prioridade." });
+      setTimeout(() => setMsg(null), 2200);
+      setModalPrioridade((m) => ({ ...m, saving: false }));
+    }
+  }
+
   // Evitar whitespace/comentários dentro do <colgroup> (elimina warnings do React)
   const colWidths = React.useMemo(
     () => ["w-28", "w-40", "w-[320px]", "w-[300px]", "w-40", "w-28", "w-56", "w-28", "w-40", "w-40"],
@@ -339,12 +450,28 @@ export default function PendingReconnectionsTable() {
           <h3 className="font-semibold">Religações pendentes</h3>
           <p className="text-slate-400 text-sm">Exibe as ordens com status “Aguardando Religação”.</p>
         </div>
-        <button
-          onClick={load}
-          className="text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10"
-        >
-          {loading ? "Atualizando…" : "Atualizar"}
-        </button>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setOver24h((v) => !v)}
+            className={`px-3 py-1.5 rounded-lg border text-xs ${
+              over24h
+                ? "bg-rose-600 text-white border-rose-500 hover:bg-rose-500"
+                : "bg-rose-600/90 text-white border-rose-500 hover:bg-rose-600"
+            }`}
+            title="+24h: mostrar apenas papeletas criadas há mais de 24 horas"
+          >
+            +24h
+          </button>
+
+          <button
+            onClick={load}
+            className="text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10"
+          >
+            {loading ? "Atualizando…" : "Atualizar"}
+          </button>
+        </div>
       </div>
 
       <ListFilterBar
@@ -357,6 +484,12 @@ export default function PendingReconnectionsTable() {
         }}
       />
 
+      {over24h && (
+        <div className="mb-3 text-xs px-3 py-2 rounded-lg bg-rose-500/15 text-rose-300 border border-rose-400/30">
+          Filtro <strong>+24h</strong> ativo: mostrando apenas papeletas criadas há mais de 24h.
+        </div>
+      )}
+
       {msg && (
         <div
           className={`mb-3 text-sm px-3 py-2 rounded-lg ${
@@ -367,11 +500,14 @@ export default function PendingReconnectionsTable() {
         </div>
       )}
 
-      <div className="rounded-xl overflow-x-auto ring-1 ring-white/10">
-        <table className="w-full text-sm table-auto">
+      {/* >>> Container com rolagem vertical e horizontal */}
+      <div className="rounded-xl ring-1 ring-white/10 max-h-[60vh] overflow-x-auto overflow-y-auto">
+        {/* >>> Tabela com largura mínima para habilitar scroll horizontal */}
+        <table className="min-w-[1200px] w-max text-sm table-auto">
           <colgroup>{colEls}</colgroup>
 
-          <thead className="bg-white/5 text-slate-300">
+          {/* >>> Cabeçalho fixo durante o scroll vertical */}
+          <thead className="sticky top-0 z-20 bg-slate-900/95 text-slate-100 backdrop-blur supports-backdrop-blur:bg-slate-900/80 borde-white/10">
             <tr>
               <th className="text-left font-medium py-2 px-3">Matrícula</th>
               <th className="text-left font-medium py-2 px-3">Bairro</th>
@@ -389,24 +525,115 @@ export default function PendingReconnectionsTable() {
           <tbody className="divide-y divide-white/10">
             {rows.map((r) => (
               <tr key={r.id} className="bg-slate-950/40 align-middle">
+                {/* Matricula (não editável) */}
                 <td className="py-2 px-3 font-mono whitespace-nowrap">{r.matricula}</td>
-                <td className="py-2 px-3">
-                  <div className="truncate max-w-[160px]" title={r.bairro}>{r.bairro}</div>
+
+                {/* Bairro (editável por duplo clique) */}
+                <td
+                  className="py-2 px-3"
+                  onDoubleClick={() => startEdit(r, "bairro")}
+                >
+                  {editing && editing.id === r.id && editing.field === "bairro" ? (
+                    <input
+                      autoFocus
+                      value={editing.value}
+                      onChange={(e) => setEditing({ id: r.id, field: "bairro", value: e.target.value })}
+                      onBlur={saveEdit}
+                      onKeyDown={onCellKeyDown}
+                      className="w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
+                    />
+                  ) : (
+                    <div className="truncate max-w-[160px]" title={r.bairro}>{r.bairro}</div>
+                  )}
                 </td>
-                <td className="py-2 px-3">
-                  <div className="truncate max-w-[280px]" title={`${r.rua}, ${r.numero}`}>{r.rua}, {r.numero}</div>
+
+                {/* Rua e nº (editável: dois inputs lado a lado) */}
+                <td
+                  className="py-2 px-3"
+                  onDoubleClick={() => startEdit(r, "rua_numero")}
+                >
+                  {editing && editing.id === r.id && editing.field === "rua_numero" ? (
+                    <div className="flex gap-2">
+                      <input
+                        autoFocus
+                        placeholder="RUA"
+                        value={editing.value}
+                        onChange={(e) =>
+                          setEditing({ id: r.id, field: "rua_numero", value: e.target.value, value2: editing.value2 })
+                        }
+                        onKeyDown={onCellKeyDown}
+                        onBlur={saveEdit}
+                        className="w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
+                      />
+                      <input
+                        placeholder="Nº"
+                        value={editing.value2}
+                        onChange={(e) =>
+                          setEditing({ id: r.id, field: "rua_numero", value: editing.value, value2: e.target.value })
+                        }
+                        onKeyDown={onCellKeyDown}
+                        onBlur={saveEdit}
+                        className="w-28 rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
+                      />
+                    </div>
+                  ) : (
+                    <div className="truncate max-w-[280px]" title={`${r.rua}, ${r.numero}`}>{r.rua}, {r.numero}</div>
+                  )}
                 </td>
-                <td className="py-2 px-3">
-                  <div className="truncate max-w-[260px]" title={r.ponto_referencia || "-"}>{r.ponto_referencia || "-"}</div>
+
+                {/* Ponto ref. (editável) */}
+                <td
+                  className="py-2 px-3"
+                  onDoubleClick={() => startEdit(r, "ponto_referencia")}
+                >
+                  {editing && editing.id === r.id && editing.field === "ponto_referencia" ? (
+                    <input
+                      autoFocus
+                      value={editing.value}
+                      onChange={(e) => setEditing({ id: r.id, field: "ponto_referencia", value: e.target.value })}
+                      onBlur={saveEdit}
+                      onKeyDown={onCellKeyDown}
+                      className="w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
+                    />
+                  ) : (
+                    <div className="truncate max-w-[260px]" title={r.ponto_referencia || "-"}>{r.ponto_referencia || "-"}</div>
+                  )}
                 </td>
-                <td className="py-2 px-3 whitespace-nowrap">{fmtTel(r.telefone)}</td>
-                <td className="py-2 px-3">
+
+                {/* Telefone (editável) */}
+                <td
+                  className="py-2 px-3 whitespace-nowrap"
+                  onDoubleClick={() => startEdit(r, "telefone")}
+                >
+                  {editing && editing.id === r.id && editing.field === "telefone" ? (
+                    <input
+                      autoFocus
+                      value={editing.value}
+                      onChange={(e) => setEditing({ id: r.id, field: "telefone", value: e.target.value })}
+                      onBlur={saveEdit}
+                      onKeyDown={onCellKeyDown}
+                      inputMode="tel"
+                      className="w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
+                    />
+                  ) : (
+                    fmtTel(r.telefone)
+                  )}
+                </td>
+
+                {/* Prioridade (duplo clique abre senha e alterna) */}
+                <td
+                  className="py-2 px-3"
+                  onDoubleClick={() => onDblClickPrioridade(r)}
+                  title="Duplo clique para alternar (requer senha)"
+                >
                   {r.prioridade ? (
                     <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-fuchsia-500/20 text-fuchsia-300 ring-1 ring-fuchsia-400/30 whitespace-nowrap">PRIORIDADE</span>
                   ) : (
                     <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-slate-500/20 text-slate-300 ring-1 ring-slate-400/30 whitespace-nowrap">Normal</span>
                   )}
                 </td>
+
+                {/* Status / Ativar */}
                 <td className="py-2 px-3 text-center whitespace-nowrap">
                   <div className="inline-flex items-center gap-2">
                     <StatusBadge status={r.status} />
@@ -433,8 +660,14 @@ export default function PendingReconnectionsTable() {
                     )}
                   </div>
                 </td>
+
+                {/* PDF */}
                 <td className="py-2 px-3 text-center">{renderImprimirCell(r)}</td>
+
+                {/* Criado em */}
                 <td className="py-2 px-3 text-center whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
+
+                {/* Hidrômetro? */}
                 <td className="py-2 px-3 text-center">
                   <HidrometroBadge value={r.precisa_troca_hidrometro} />
                 </td>
@@ -470,7 +703,7 @@ export default function PendingReconnectionsTable() {
         </div>
       )}
 
-      {/* Modais */}
+      {/* Modais de ativação */}
       {modalAtivarSim.open && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-md">
@@ -485,7 +718,9 @@ export default function PendingReconnectionsTable() {
             <label className="block text-sm text-slate-300 mb-1">NOVO NÚMERO DO HIDRÔMETRO</label>
             <input
               value={modalAtivarSim.novoNumero ?? ""}
-              onChange={(e) => setModalAtivarSim((m) => ({ ...m, novoNumero: e.target.value.toUpperCase() }))}
+              onChange={(e) =>
+                setModalAtivarSim((m) => ({ ...m, novoNumero: e.target.value.toUpperCase() }))
+              }
               className="w-full rounded-xl bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 text-white"
               placeholder="DIGITE AQUI…"
               autoFocus
@@ -537,6 +772,46 @@ export default function PendingReconnectionsTable() {
                 disabled={!!modalAtivarNao.saving}
               >
                 {modalAtivarNao.saving ? "Ativando…" : "Ativar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de senha para Prioridade */}
+      {modalPrioridade.open && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-sm">
+            <h3 className="text-lg font-semibold text-white mb-2">Alterar Prioridade</h3>
+            <p className="text-slate-300 text-sm mb-3">
+              {modalPrioridade.atual ? "Remover prioridade desta ordem?" : "Definir prioridade para esta ordem?"}
+            </p>
+            <label className="block text-sm text-slate-300 mb-1">Senha do Diretor</label>
+            <input
+              type="password"
+              value={modalPrioridade.senha ?? ""}
+              onChange={(e) => setModalPrioridade((m) => ({ ...m, senha: e.target.value }))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") confirmarPrioridade();
+              }}
+              className="w-full rounded-xl bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-fuchsia-400/40 text-white"
+              placeholder="Digite a senha"
+              autoFocus
+            />
+            <div className="mt-5 flex justify-end gap-3">
+              <button
+                onClick={() => setModalPrioridade({ open: false })}
+                className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200"
+                disabled={!!modalPrioridade.saving}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarPrioridade}
+                className="px-4 py-2 rounded-lg bg-fuchsia-600 hover:bg-fuchsia-500 text-white disabled:opacity-60"
+                disabled={!!modalPrioridade.saving}
+              >
+                {modalPrioridade.saving ? "Salvando…" : "Confirmar"}
               </button>
             </div>
           </div>
