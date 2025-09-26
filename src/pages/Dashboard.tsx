@@ -18,6 +18,8 @@ import AllReconnectionsTable from "../components/tables/AllReconnectionsTable";
 
 import UsersPage from "./UsersPage";
 import Historico from "./Historico"; // ✅ ADICIONADO
+import ReportsPage from "./Relatorios";
+
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 
 type BairroRow = { id: number; bairro: string };
@@ -437,7 +439,7 @@ export default function Dashboard() {
               {active === "religacaoNew" && (
                 <>
                   <h1 className="text-2xl">Nova ordem de religação</h1>
-                  <ReconnectionOrderForm />
+                <ReconnectionOrderForm />
                 </>
               )}
 
@@ -473,13 +475,8 @@ export default function Dashboard() {
 
               {active === "historico" && <Historico />}{/* ✅ ADICIONADO */}
 
-              {active === "relatorios" && (
-                <div className="flex items-center justify-center min-h-[60vh]">
-                  <h1 className="text-3xl font-bold text-slate-300 text-center">
-                    Em breve ficará à disposição
-                  </h1>
-                </div>
-              )}
+              {/* ✅ Relatórios: troca o placeholder pelo componente */}
+              {active === "relatorios" && <ReportsPage />}
             </div>
           </div>
         </div>
