@@ -1,3 +1,4 @@
+// src/components/Sidebar.tsx
 import * as React from "react";
 import { type NavKey } from "../types/nav";
 import supabase from "../lib/supabase";
@@ -14,16 +15,12 @@ import {
   LogOut,
   History,
   ChevronDown,
-  X,
 } from "lucide-react";
 
 type Props = {
   active: NavKey;
   onSelect: (k: NavKey) => void;
-
-  /** controle do drawer mobile (opcional — usado no Dashboard) */
-  mobileOpen?: boolean;
-  onMobileClose?: () => void;
+  onAfterSelect?: () => void; // fecha o menu no mobile após clicar
 };
 
 function Item({
@@ -31,17 +28,22 @@ function Item({
   label,
   k,
   active,
-  onClick,
+  onSelect,
+  onAfterSelect,
 }: {
   icon: React.ElementType;
   label: string;
   k: NavKey;
   active: boolean;
-  onClick: (k: NavKey) => void;
+  onSelect: (k: NavKey) => void;
+  onAfterSelect?: () => void;
 }) {
   return (
     <button
-      onClick={() => onClick(k)}
+      onClick={() => {
+        onSelect(k);
+        onAfterSelect?.();
+      }}
       className={[
         "group w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all",
         active
@@ -70,45 +72,54 @@ function Item({
   );
 }
 
-function Section({
+function AccordionSection({
   title,
   children,
+  storageKey,
   defaultOpen = true,
 }: {
   title: string;
   children: React.ReactNode;
+  storageKey: string;
   defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = React.useState(defaultOpen);
+  const [open, setOpen] = React.useState<boolean>(() => {
+    try {
+      const v = localStorage.getItem(`sb:section:${storageKey}`);
+      return v === null ? defaultOpen : v === "1";
+    } catch {
+      return defaultOpen;
+    }
+  });
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(`sb:section:${storageKey}`, open ? "1" : "0");
+    } catch {}
+  }, [open, storageKey]);
+
   return (
-    <div className="mb-1">
+    <div className="border-t border-white/10 first:border-t-0 pt-3">
       <button
-        className="w-full flex items-center justify-between px-3 mt-3 mb-2 text-[11px] uppercase tracking-wide text-slate-400/80"
+        type="button"
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="w-full flex items-center justify-between px-2 py-2 rounded-lg text-[11px] uppercase tracking-wide text-slate-400/90 hover:bg-white/5"
       >
-        <span>{title}</span>
+        <span className="px-1">{title}</span>
         <ChevronDown
           size={16}
-          className={`transition-transform ${open ? "rotate-180" : ""}`}
+          className={`transition-transform duration-200 ${open ? "rotate-0" : "-rotate-90"}`}
         />
       </button>
-      <div
-        className={`grid gap-1 overflow-hidden transition-[grid-template-rows,opacity] duration-200 ${
-          open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
-        }`}
-      >
-        <div className="min-h-0">{children}</div>
-      </div>
+
+      {/* Conteúdo (sanfona) */}
+      <div className={`${open ? "block" : "hidden"} mt-2 space-y-1 px-1`}>{children}</div>
     </div>
   );
 }
 
-export default function Sidebar({
-  active,
-  onSelect,
-  mobileOpen,
-  onMobileClose,
-}: Props) {
+export default function Sidebar({ active, onSelect, onAfterSelect }: Props) {
   async function handleSignOut() {
     try {
       await supabase.auth.signOut();
@@ -117,120 +128,112 @@ export default function Sidebar({
     }
   }
 
-  // Ao clicar em item no mobile: seleciona e fecha o drawer
-  const handleSelect = (k: NavKey) => {
-    onSelect(k);
-    if (onMobileClose) onMobileClose();
-  };
-
-  // Conteúdo do menu (reutilizado em desktop e mobile)
-  const MenuContent = (
-    <>
+  return (
+    <aside className="w-72 h-full bg-slate-950/95 border-r border-white/10 flex flex-col">
       {/* topo */}
-      <div className="px-4 py-4 border-b border-white/10 flex items-center justify-between">
-        <div>
-          <div className="text-lg font-semibold">
-            <span className="text-indigo-400">SANEAR</span>{" "}
-          </div>
-          <div className="text-xs text-slate-400">Corte & Religação</div>
+      <div className="px-4 py-4 border-b border-white/10">
+        <div className="text-lg font-semibold">
+          <span className="text-indigo-400">SANEAR</span>{" "}
         </div>
-
-        {/* botão fechar (somente mobile) */}
-        <button
-          onClick={onMobileClose}
-          className="md:hidden p-2 rounded-lg hover:bg-white/10"
-          aria-label="Fechar menu"
-        >
-          <X size={18} />
-        </button>
+        <div className="text-xs text-slate-400">Corte & Religação</div>
       </div>
 
-      {/* navegação com rolagem */}
-      <div className="flex-1 p-3 space-y-1 overflow-y-auto">
-        <Section title="Principal">
+      {/* navegação com scroll */}
+      <div className="flex-1 p-3 overflow-y-auto">
+        <AccordionSection title="Principal" storageKey="principal" defaultOpen>
           <Item
             icon={LayoutDashboard}
             label="Dashboard"
             k="dashboard"
             active={active === "dashboard"}
-            onClick={handleSelect}
+            onSelect={onSelect}
+            onAfterSelect={onAfterSelect}
           />
-        </Section>
+        </AccordionSection>
 
-        <Section title="Cadastro de serviços">
+        <AccordionSection title="Cadastro de serviços" storageKey="cadastro" defaultOpen>
           <Item
             icon={Scissors}
             label="Nova ordem de corte"
             k="corteNew"
             active={active === "corteNew"}
-            onClick={handleSelect}
+            onSelect={onSelect}
+            onAfterSelect={onAfterSelect}
           />
           <Item
             icon={PlugZap}
             label="Nova papeleta de religação"
             k="religacaoNew"
             active={active === "religacaoNew"}
-            onClick={handleSelect}
+            onSelect={onSelect}
+            onAfterSelect={onAfterSelect}
           />
-        </Section>
+        </AccordionSection>
 
-        <Section title="Serviços pendentes">
+        <AccordionSection title="Serviços pendentes" storageKey="pendentes" defaultOpen>
           <Item
             icon={ClipboardList}
             label="OS de corte pendentes"
             k="cortePend"
             active={active === "cortePend"}
-            onClick={handleSelect}
+            onSelect={onSelect}
+            onAfterSelect={onAfterSelect}
           />
           <Item
             icon={ClipboardCheck}
             label="Papeletas pendentes"
             k="papeletasPend"
             active={active === "papeletasPend"}
-            onClick={handleSelect}
+            onSelect={onSelect}
+            onAfterSelect={onAfterSelect}
           />
-        </Section>
+        </AccordionSection>
 
-        <Section title="Consultas">
+        <AccordionSection title="Consultas" storageKey="consultas">
           <Item
             icon={FileClock}
             label="Todos os corte"
             k="ordensAll"
             active={active === "ordensAll"}
-            onClick={handleSelect}
+            onSelect={onSelect}
+            onAfterSelect={onAfterSelect}
           />
           <Item
             icon={FileCheck}
             label="Todas as religação"
             k="papeletasAll"
             active={active === "papeletasAll"}
-            onClick={handleSelect}
+            onSelect={onSelect}
+            onAfterSelect={onAfterSelect}
           />
-        </Section>
+        </AccordionSection>
 
-        <Section title="Administração">
+        <AccordionSection title="Administração" storageKey="admin">
           <Item
             icon={BarChart2}
             label="Relatórios"
             k="relatorios"
             active={active === "relatorios"}
-            onClick={handleSelect}
+            onSelect={onSelect}
+            onAfterSelect={onAfterSelect}
           />
           <Item
             icon={Users}
             label="Usuários"
             k="usuarios"
             active={active === "usuarios"}
-            onClick={handleSelect}
+            onSelect={onSelect}
+            onAfterSelect={onAfterSelect}
           />
           <Item
             icon={History}
             label="Histórico"
             k="historico"
             active={active === "historico"}
-            onClick={handleSelect}
+            onSelect={onSelect}
+            onAfterSelect={onAfterSelect}
           />
-        </Section>
+        </AccordionSection>
       </div>
 
       {/* rodapé */}
@@ -242,43 +245,10 @@ export default function Sidebar({
           <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-rose-600/20">
             <LogOut size={18} />
           </span>
-          <span className="text-sm font-medium">Sair</span>
+        <span className="text-sm font-medium">Sair</span>
           <span className="ml-auto h-5 w-1 rounded-full bg-rose-400" />
         </button>
       </div>
-    </>
-  );
-
-  return (
-    <>
-      {/* DESKTOP: sidebar fixa */}
-      <aside className="hidden md:flex w-72 min-h-screen bg-slate-950/95 border-r border-white/10 flex-col">
-        {MenuContent}
-      </aside>
-
-      {/* MOBILE: drawer + backdrop */}
-      <div
-        className={`md:hidden fixed inset-0 z-50 transition ${
-          mobileOpen ? "pointer-events-auto" : "pointer-events-none"
-        }`}
-      >
-        {/* backdrop */}
-        <div
-          className={`absolute inset-0 bg-black/50 transition-opacity ${
-            mobileOpen ? "opacity-100" : "opacity-0"
-          }`}
-          onClick={onMobileClose}
-        />
-
-        {/* drawer */}
-        <aside
-          className={`absolute top-0 left-0 h-full w-72 bg-slate-950/95 border-r border-white/10 flex flex-col transform transition-transform ${
-            mobileOpen ? "translate-x-0" : "-translate-x-full"
-          }`}
-        >
-          {MenuContent}
-        </aside>
-      </div>
-    </>
+    </aside>
   );
 }

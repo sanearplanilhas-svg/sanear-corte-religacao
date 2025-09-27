@@ -1,12 +1,11 @@
 // src/components/Topbar.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Search, X, Sun, Moon, User, Lock, Eye, EyeOff, LogOut, Menu } from "lucide-react";
+import { Search, X, Sun, Moon, User, Lock, Eye, EyeOff, LogOut, Menu } from "lucide-react"; // 👈 + Menu
 import supabase from "../lib/supabase";
 
 type Props = {
-  /** Abre o sidebar no mobile (drawer) */
-  onOpenMenu?: () => void;
+  onOpenMenu?: () => void; // 👈 novo: abrir sidebar no mobile
 };
 
 type OrdemBase = {
@@ -43,7 +42,6 @@ function norm(s?: string | null) {
 // paleta única p/ o app
 function badgeStyle(status: string) {
   const s = norm(status);
-  // map de grupos
   const isAtiva = s === "ativa" || s === "ativo";
   const isAguardandoRelig = s === "aguardando religacao" || s.startsWith("aguardando religacao");
   const isAguardandoLiber = s === "aguardando liberacao" || s === "liberacao pendente";
@@ -139,7 +137,6 @@ export default function Topbar({ onOpenMenu }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [showUnlockPass, setShowUnlockPass] = useState(false);
 
-  // sync com localStorage + entre abas
   useEffect(() => {
     const sync = () => setLocked(isAuthed && readLSLocked());
     const onStorage = (e: StorageEvent) => {
@@ -154,7 +151,6 @@ export default function Topbar({ onOpenMenu }: Props) {
     };
   }, [isAuthed]);
 
-  // se a sessão cair, destrava automaticamente
   useEffect(() => {
     if (!isAuthed && locked) {
       localStorage.removeItem("app:locked");
@@ -174,7 +170,6 @@ export default function Topbar({ onOpenMenu }: Props) {
     document.body.style.overflow = "hidden";
   }
 
-  // bloqueia só o scroll do body
   useEffect(() => {
     const prev = document.body.style.overflow;
     if (locked) document.body.style.overflow = "hidden";
@@ -317,21 +312,19 @@ export default function Topbar({ onOpenMenu }: Props) {
         }}
       >
         <div className="mx-auto max-w-7xl px-6 py-3 flex items-center justify-between gap-4">
-          {/* ESQUERDA: botão menu (mobile) + busca */}
+          {/* ESQUERDA: botão menu (apenas mobile) + busca */}
           <div className="flex items-center gap-2">
-            {/* Hambúrguer — só mobile */}
-            <button
-              type="button"
-              onClick={onOpenMenu}
-              disabled={!onOpenMenu}
-              className="md:hidden inline-flex items-center justify-center w-10 h-10 rounded-xl bg-white/10 hover:bg-white/20 border border-white/10"
-              aria-label="Abrir menu"
-              title="Abrir menu"
-            >
-              <Menu className="h-5 w-5 text-white" />
-            </button>
+            {onOpenMenu && (
+              <button
+                className="lg:hidden p-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10"
+                onClick={onOpenMenu}
+                aria-label="Abrir menu"
+                title="Abrir menu"
+              >
+                <Menu className="h-5 w-5 text-slate-200" />
+              </button>
+            )}
 
-            {/* Busca */}
             <div className="relative">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
               <input
@@ -364,13 +357,11 @@ export default function Topbar({ onOpenMenu }: Props) {
               {theme === "dark" ? <Sun className="h-4 w-4 text-amber-300" /> : <Moon className="h-4 w-4 text-slate-700" />}
             </button>
 
-            {/* Chip com NOME (fallback: email) */}
             <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10" title={authEmail || ""}>
               <User className="h-4 w-4 text-pink-300" />
               <span className="text-sm text-slate-200">{displayName || "—"}</span>
             </div>
 
-            {/* Botão Congelar tela — LARANJA */}
             <button
               onClick={openLock}
               className="px-3 py-2 text-sm rounded-lg bg-orange-500/20 text-orange-300 ring-1 ring-orange-400/40 hover:bg-orange-500/30 flex items-center gap-2"
@@ -527,7 +518,6 @@ export default function Topbar({ onOpenMenu }: Props) {
                   >
                     {submitting ? "Verificando..." : "Desbloquear"}
                   </button>
-                  {/* Sair — LARANJA */}
                   <button
                     type="button"
                     onClick={onSignOut}
