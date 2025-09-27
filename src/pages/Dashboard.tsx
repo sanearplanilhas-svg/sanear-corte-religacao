@@ -1,7 +1,7 @@
 // src/pages/Dashboard.tsx
 import React, { useEffect, useState } from "react";
 import type { NavKey } from "../types/nav";
-import supabase from "../lib/supabase"; // ✅ default import (igual aos outros arquivos)
+import supabase from "../lib/supabase";
 
 import Sidebar from "../components/Sidebar";
 import Topbar from "../components/Topbar";
@@ -9,15 +9,13 @@ import Topbar from "../components/Topbar";
 import CutOrderForm from "../components/forms/CutOrderForm";
 import ReconnectionOrderForm from "../components/forms/ReconnectionOrderForm";
 
-// ✅ imports corrigidos para a pasta components/tables
 import PendingCutsTable from "../components/tables/PendingCutsTable";
 import PendingReconnectionsTable from "../components/tables/PendingReconnectionsTable";
-
 import AllOrdersTable from "../components/tables/AllOrdersTable";
 import AllReconnectionsTable from "../components/tables/AllReconnectionsTable";
 
 import UsersPage from "./UsersPage";
-import Historico from "./Historico"; // ✅ ADICIONADO
+import Historico from "./Historico";
 import ReportsPage from "./Relatorios";
 
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
@@ -27,18 +25,26 @@ type BairroRow = { id: number; bairro: string };
 export default function Dashboard() {
   const [active, setActive] = useState<NavKey>("dashboard");
 
+  // ===== Sidebar responsiva (overlay em telas pequenas)
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  function handleSelect(k: NavKey) {
+    setActive(k);
+    if (window.innerWidth < 768) setSidebarOpen(false); // fecha no mobile
+  }
+
+  // ===== Contadores
   const [aguardandoCorte, setAguardandoCorte] = useState(0);
   const [aguardandoRelig, setAguardandoRelig] = useState(0);
   const [cortadas, setCortadas] = useState(0);
   const [ativas, setAtivas] = useState(0);
 
-  // Filtro
+  // ===== Filtro
   const [showFiltro, setShowFiltro] = useState(false);
   const [dateStart, setDateStart] = useState("");
   const [dateEnd, setDateEnd] = useState("");
   const [allDates, setAllDates] = useState(true);
 
-  // Bairros
+  // ===== Bairros (aviso)
   const [bairros, setBairros] = useState<BairroRow[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [novoBairro, setNovoBairro] = useState("");
@@ -145,10 +151,11 @@ export default function Dashboard() {
         }),
       ]);
 
-      setAguardandoCorte(pendCorte);
-      setAguardandoRelig(aguardRelig);
-      setCortadas(qtdCortadas);
-      setAtivas(qtdAtivas);
+      // evita setState desnecessário (menos re-render)
+      setAguardandoCorte((v) => (v !== pendCorte ? pendCorte : v));
+      setAguardandoRelig((v) => (v !== aguardRelig ? aguardRelig : v));
+      setCortadas((v) => (v !== qtdCortadas ? qtdCortadas : v));
+      setAtivas((v) => (v !== qtdAtivas ? qtdAtivas : v));
     } catch (err) {
       console.error("Erro ao buscar contagens:", err);
     }
@@ -163,7 +170,6 @@ export default function Dashboard() {
       console.error("Erro ao carregar bairros:", error.message);
       return;
     }
-    // normaliza: id como number
     setBairros(
       (data ?? []).map((r: any) => ({ id: Number(r.id), bairro: r.bairro })) as BairroRow[]
     );
@@ -182,24 +188,19 @@ export default function Dashboard() {
 
     const payload = bairrosLista.map((b) => ({ bairro: b }));
 
-    // ✅ usar INSERT na VIEW (o trigger faz upsert na tabela base e bloqueia visitante)
-    const { data, error } = await supabase
-      .from("avisos_bairros")
-      .insert(payload)
-      .select("id,bairro,created_at");
-
+    const { error } = await supabase.from("avisos_bairros").insert(payload);
     if (error) {
       console.error("Erro ao salvar bairros:", error.message);
       return;
     }
 
-    // recarrega da fonte para evitar duplicatas
     await fetchBairros();
     setShowModal(false);
     setNovoBairro("");
   };
 
-  const excluirBairros = async () => {
+  // ✅ Reposta ao erro “excluirBairros não definido”
+  async function excluirBairros() {
     const ids = Array.from(selecionados);
     if (ids.length === 0) {
       setDeleteMode(false);
@@ -210,18 +211,17 @@ export default function Dashboard() {
       console.error("Erro ao excluir bairros:", error.message);
       return;
     }
-    // atualiza local
     setBairros((prev) => prev.filter((b) => !selecionados.has(b.id)));
     setSelecionados(new Set());
     setDeleteMode(false);
-  };
+  }
 
   useEffect(() => {
     fetchCounts();
     fetchBairros();
   }, [dateStart, dateEnd, allDates]);
 
-  // 🔁 Auto-refresh a cada 2s
+  // 🔁 Auto-refresh (mantive, mas agora os gráficos não animam)
   useEffect(() => {
     const id = window.setInterval(() => {
       fetchCounts();
@@ -260,21 +260,47 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      {/* Sidebar fixa */}
-      <div className="fixed top-0 left-0 h-full w-72 z-40">
-        <Sidebar active={active} onSelect={(k: NavKey) => setActive(k)} />
+      {/* ===== Botão hambúrguer (só no mobile) ===== */}
+      <button
+        aria-label="Abrir menu"
+        className="md:hidden fixed top-3 left-3 z-50 px-3 py-2 rounded-lg bg-white/10 border border-white/20"
+        onClick={() => setSidebarOpen(true)}
+      >
+        {/* simples ícone de três barras */}
+        <div className="space-y-1">
+          <span className="block h-[2px] w-5 bg-white/80" />
+          <span className="block h-[2px] w-5 bg-white/80" />
+          <span className="block h-[2px] w-5 bg-white/80" />
+        </div>
+      </button>
+
+      {/* ===== Sidebar (fixa no desktop, overlay no mobile) ===== */}
+      {/* Backdrop */}
+      {sidebarOpen && (
+        <div
+          className="md:hidden fixed inset-0 z-40 bg-black/50"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      {/* Container da sidebar */}
+      <div
+        className={[
+          "fixed top-0 left-0 z-50 h-full w-72 transition-transform duration-200 md:translate-x-0",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+        ].join(" ")}
+      >
+        <Sidebar active={active} onSelect={handleSelect} />
       </div>
 
-      {/* Main deslocado pela sidebar */}
-      <main className="ml-72 flex-1 relative">
-        {/* Topbar fixa */}
-        <div className="fixed top-0 left-72 right-0 h-16 z-30">
+      {/* ===== Main ===== */}
+      <main className="flex-1 relative md:ml-72 ml-0">
+        <div className="fixed top-0 md:left-72 left-0 right-0 h-16 z-30">
           <Topbar />
         </div>
 
         {/* Conteúdo rolável */}
-        <div className="pt-24 px-8">
-          <div className="h-[calc(100vh-6rem)] overflow-y-auto pr-3 pb-10">
+        <div className="pt-24 px-4 md:px-8">
+          <div className="h-[calc(100vh-6rem)] overflow-y-auto pr-1 md:pr-3 pb-10">
             <div className="max-w-7xl mx-auto space-y-8">
               {active === "dashboard" && (
                 <>
@@ -297,29 +323,29 @@ export default function Dashboard() {
                       title="Aguardando Corte"
                       value={aguardandoCorte}
                       accent="#f97316"
-                      onClick={() => setActive("cortePend")}
+                      onClick={() => handleSelect("cortePend")}
                     />
                     <BigStat
                       title="Cortadas"
                       value={cortadas}
                       accent="#dc2626"
-                      onClick={() => setActive("ordensAll")}
+                      onClick={() => handleSelect("ordensAll")}
                     />
                     <BigStat
                       title="Aguardando Religação"
                       value={aguardandoRelig}
                       accent="#facc15"
-                      onClick={() => setActive("papeletasPend")}
+                      onClick={() => handleSelect("papeletasPend")}
                     />
                     <BigStat
                       title="Ativas"
                       value={ativas}
                       accent="#22c55e"
-                      onClick={() => setActive("papeletasAll")}
+                      onClick={() => handleSelect("papeletasAll")}
                     />
                   </div>
 
-                  {/* Gráficos */}
+                  {/* Gráficos (animação desativada) */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
                     <div className="bg-slate-900/50 p-6 rounded-2xl">
                       <h3 className="text-lg font-semibold mb-4 text-center">Cortes</h3>
@@ -337,6 +363,7 @@ export default function Dashboard() {
                             dataKey="value"
                             cx="50%"
                             cy="100%"
+                            isAnimationActive={false}   // 👈 sem animação
                           >
                             <Cell fill="#f97316" />
                             <Cell fill="#dc2626" />
@@ -369,6 +396,7 @@ export default function Dashboard() {
                             dataKey="value"
                             cx="50%"
                             cy="100%"
+                            isAnimationActive={false}   // 👈 sem animação
                           >
                             <Cell fill="#facc15" />
                             <Cell fill="#22c55e" />
@@ -439,14 +467,14 @@ export default function Dashboard() {
               {active === "religacaoNew" && (
                 <>
                   <h1 className="text-2xl">Nova ordem de religação</h1>
-                <ReconnectionOrderForm />
+                  <ReconnectionOrderForm />
                 </>
               )}
 
               {active === "cortePend" && (
                 <>
                   <h1 className="text-2xl">Cortes pendentes</h1>
-                  <PendingCutsTable />
+                <PendingCutsTable />
                 </>
               )}
 
@@ -473,9 +501,8 @@ export default function Dashboard() {
 
               {active === "usuarios" && <UsersPage />}
 
-              {active === "historico" && <Historico />}{/* ✅ ADICIONADO */}
+              {active === "historico" && <Historico />}
 
-              {/* ✅ Relatórios: troca o placeholder pelo componente */}
               {active === "relatorios" && <ReportsPage />}
             </div>
           </div>

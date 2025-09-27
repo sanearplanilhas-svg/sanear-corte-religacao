@@ -1,8 +1,13 @@
 // src/components/Topbar.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Search, X, Sun, Moon, User, Lock, Eye, EyeOff, LogOut } from "lucide-react";
+import { Search, X, Sun, Moon, User, Lock, Eye, EyeOff, LogOut, Menu } from "lucide-react";
 import supabase from "../lib/supabase";
+
+type Props = {
+  /** Abre o sidebar no mobile (drawer) */
+  onOpenMenu?: () => void;
+};
 
 type OrdemBase = {
   matricula: string;
@@ -67,7 +72,7 @@ function derivarStatusAtual(corte: OrdemBase | null, relig: OrdemBase | null): s
   return "—";
 }
 
-export default function Topbar() {
+export default function Topbar({ onOpenMenu }: Props) {
   // Tema
   const [theme, setTheme] = useState<"dark" | "light">(
     (localStorage.getItem("theme") as "dark" | "light") || "dark"
@@ -306,15 +311,27 @@ export default function Topbar() {
       <div
         className="relative border-b border-white/5 bg-slate-950/60 backdrop-blur"
         style={{
-          // Safe-area: notch (top) e laterais (Dynamic Island/curvas)
           paddingTop: "env(safe-area-inset-top)",
           paddingLeft: "env(safe-area-inset-left)",
           paddingRight: "env(safe-area-inset-right)",
         }}
       >
         <div className="mx-auto max-w-7xl px-6 py-3 flex items-center justify-between gap-4">
-          {/* Busca */}
+          {/* ESQUERDA: botão menu (mobile) + busca */}
           <div className="flex items-center gap-2">
+            {/* Hambúrguer — só mobile */}
+            <button
+              type="button"
+              onClick={onOpenMenu}
+              disabled={!onOpenMenu}
+              className="md:hidden inline-flex items-center justify-center w-10 h-10 rounded-xl bg-white/10 hover:bg-white/20 border border-white/10"
+              aria-label="Abrir menu"
+              title="Abrir menu"
+            >
+              <Menu className="h-5 w-5 text-white" />
+            </button>
+
+            {/* Busca */}
             <div className="relative">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
               <input
@@ -338,7 +355,7 @@ export default function Topbar() {
             </button>
           </div>
 
-          {/* Ações à direita */}
+          {/* DIREITA: ações */}
           <div className="flex items-center gap-3">
             <button
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -382,7 +399,6 @@ export default function Topbar() {
               <button
                 onClick={() => {
                   setOpenCard(false);
-                  // limpa o campo ao fechar o card
                   setSearchMatricula("");
                 }}
                 className="absolute right-3 top-3 p-1 rounded-md hover:bg-white/10"
