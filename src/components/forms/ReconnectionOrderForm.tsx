@@ -5,6 +5,7 @@ type Msg = { kind: "ok" | "err"; text: string } | null;
 
 type ObsOpt = "SEM HIDROMETRO NO LOCAL" | "HIDROMETRO VAZANDO" | "OUTROS" | "";
 type SubTab = "PAPELETA" | "LIBERACAO";
+type DocTipo = "CPF" | "OUTROS";
 
 type Pendente = {
   id: string;
@@ -19,21 +20,39 @@ const ALLOWED_CREATE = new Set(["ADM", "DIRETOR", "COORDENADOR", "OPERADOR"]);
 const ALLOWED_LIBERACAO = new Set(["ADM", "DIRETOR", "COORDENADOR"]);
 // ==================================
 
-// ✅ Telefone: mesmas regras do CHECK do banco
+// Helpers tolerantes
+const toUpper = (s?: string | null) => (s ?? "").toUpperCase();
+const onlyDigits = (s?: string | null) => (s ?? "").replace(/\D/g, "");
+const phoneClean = (s?: string | null) => (s ?? "").replace(/[^\d\-\+\(\) ]/g, "").trim();
+const errText = (e: unknown, fallback: string) =>
+  (typeof e === "object" && e && "message" in e && typeof (e as any).message === "string"
+    ? (e as any).message
+    : undefined) || fallback;
+
+// Regex do telefone (mantém como está)
 const PHONE_ALLOWED_RE = /^[0-9\-\+\(\) ]{8,20}$/;
-const phoneClean = (s: string) => (s ?? "").replace(/[^\d\-\+\(\) ]/g, "").trim();
+
+// Mensagens padrão
+const MSG_NAO_INF = "NÃO INFORMADO PELO REQUERENTE";
+const MSG_OUTROS_DOC = "OUTROS DOCUMENTO";
 
 export default function ReconnectionOrderForm() {
   // abas
   const [subTab, setSubTab] = React.useState<SubTab>("PAPELETA");
 
-  // utils
-  const toUpper = (s: string) => (s ?? "").toUpperCase();
-  const onlyDigits = (s: string) => (s ?? "").replace(/\D/g, "");
+  // flags
+  const [telefoneNaoInformado, setTelefoneNaoInformado] = React.useState(false);
+  const [pontoRefNaoInformado, setPontoRefNaoInformado] = React.useState(false);
+  const [titularConta, setTitularConta] = React.useState(false);
+  const [docTipo, setDocTipo] = React.useState<DocTipo>("CPF");
+  const [cpfModalOpen, setCpfModalOpen] = React.useState(false);
 
-  // === NOVO: Solicitante
+  // estado — solicitante
   const [solicitanteNome, setSolicitanteNome] = React.useState("");
   const [solicitanteDocumento, setSolicitanteDocumento] = React.useState("");
+
+  // armazenar nome anterior ao marcar “titular da conta”
+  const prevNomeRef = React.useRef<string>("");
 
   // estado — papeleta
   const [matricula, setMatricula] = React.useState("");
@@ -62,18 +81,23 @@ export default function ReconnectionOrderForm() {
   const [prioridadeModalOpen, setPrioridadeModalOpen] = React.useState(false);
   const [senhaDiretor, setSenhaDiretor] = React.useState("");
   const [senhaErro, setSenhaErro] = React.useState<string | null>(null);
-
   const SENHA_DIRETOR = "29101993";
 
   // observações
   const [observacaoOpt, setObservacaoOpt] = React.useState<ObsOpt>("");
   const [observacaoOutros, setObservacaoOutros] = React.useState("");
   const buildObservacao = () => {
+    const parts: string[] = [];
     if (observacaoOpt === "OUTROS") {
       const txt = toUpper(observacaoOutros).trim();
-      return txt ? `OUTROS - ${txt}` : "OUTROS";
+      parts.push(txt ? `OUTROS - ${txt}` : "OUTROS");
+    } else if (observacaoOpt) {
+      parts.push(observacaoOpt);
     }
-    return (observacaoOpt as string) || null;
+    if (titularConta) parts.push("TITULAR DA CONTA");
+    if (telefoneNaoInformado) parts.push("TELEFONE NÃO INFORMADO PELO REQUERENTE");
+    if (pontoRefNaoInformado) parts.push("PONTO DE REFERÊNCIA NÃO INFORMADO PELO REQUERENTE");
+    return parts.length ? parts.join(" | ") : null;
   };
 
   // lista liberação
@@ -100,7 +124,6 @@ export default function ReconnectionOrderForm() {
 
   const [permModalOpen, setPermModalOpen] = React.useState(false);
   const [permText, setPermText] = React.useState("Seu perfil não tem permissão para executar esta ação.");
-  const [clearOnPermClose, setClearOnPermClose] = React.useState(false);
 
   React.useEffect(() => {
     (async () => {
@@ -112,11 +135,7 @@ export default function ReconnectionOrderForm() {
           setUserRole("VISITANTE");
           return;
         }
-        const { data, error } = await supabase
-          .from("app_users")
-          .select("papel")
-          .eq("id", user.id)
-          .single();
+        const { data, error } = await supabase.from("app_users").select("papel").eq("id", user.id).single();
         if (error) throw error;
         setUserRole((data?.papel || "VISITANTE").toUpperCase());
       } catch {
@@ -129,12 +148,10 @@ export default function ReconnectionOrderForm() {
   React.useEffect(() => {
     if (subTab === "LIBERACAO" && !canLiberacao) {
       setPermText("Acesso restrito: apenas ADM, DIRETOR e COORDENADOR podem acessar a Liberação de Papeleta.");
-      setClearOnPermClose(false);
       setPermModalOpen(true);
       setSubTab("PAPELETA");
     }
   }, [subTab, canLiberacao]);
-  // ==============================================
 
   async function loadPendentes() {
     try {
@@ -155,8 +172,8 @@ export default function ReconnectionOrderForm() {
         created_at: r.created_at,
       }));
       setPendentes(rows);
-    } catch (e: any) {
-      setMsg({ kind: "err", text: e?.message ?? "Falha ao carregar pendentes." });
+    } catch (e) {
+      setMsg({ kind: "err", text: errText(e, "Falha ao carregar pendentes.") });
       setTimeout(() => setMsg(null), 2500);
     } finally {
       setCarregandoLista(false);
@@ -175,19 +192,22 @@ export default function ReconnectionOrderForm() {
     setPdfComprovante(null);
     setObservacaoOpt("");
     setObservacaoOutros("");
-    // limpar solicitante
+    // limpar solicitante e rádios
     setSolicitanteNome("");
     setSolicitanteDocumento("");
+    setTelefoneNaoInformado(false);
+    setPontoRefNaoInformado(false);
+    setTitularConta(false);
+    setDocTipo("CPF");
   }
 
-  // matrícula
+  // matrícula (manter como está)
   const handleMatricula = (e: React.ChangeEvent<HTMLInputElement>) => {
-    let value = e.target.value.replace(/\D/g, "");
+    let value = (e.target.value || "").replace(/\D/g, "");
     if (value.length > 5) value = value.slice(0, 5);
     setMatricula(value);
     setPrioridade(false);
   };
-
   const formatMatricula = () => {
     if (matricula.length < 5) {
       const m = matricula.padStart(5, "0");
@@ -197,7 +217,7 @@ export default function ReconnectionOrderForm() {
     return matricula;
   };
 
-  // telefone — helpers
+  // telefone (manter como está)
   const formatTelefonePretty = (digits: string) => {
     let d = digits;
     if (d.startsWith("55")) d = d.slice(2);
@@ -211,13 +231,13 @@ export default function ReconnectionOrderForm() {
     if (rest.length === 8) return `+55 ${ddd} ${rest.slice(0, 4)}-${rest.slice(4)}`;
     return `+55 ${ddd} ${rest}`;
   };
-
   const handleTelefoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setTelefone(e.target.value);
+    setTelefone(e.target.value || "");
   };
-
+  const onlyDigitsLocal = (s: string) => s.replace(/\D/g, "");
   const handleTelefoneBlur = () => {
-    const d = onlyDigits(telefone);
+    if (telefoneNaoInformado) return;
+    const d = onlyDigitsLocal(telefone);
     if (!d) return;
     let out = d;
     if (d.length === 8 || d.length === 9) out = `27${d}`;
@@ -225,7 +245,7 @@ export default function ReconnectionOrderForm() {
     setTelefone(formatTelefonePretty(out));
   };
 
-  // buscar dados de matrícula (inclui telefone, se existir)
+  // buscar dados de matrícula (mantém)
   async function fetchMatriculaData(m: string) {
     if (!m) return;
 
@@ -265,22 +285,105 @@ export default function ReconnectionOrderForm() {
     }
   }
 
+  // ===== Validação de CPF (Opção 2 — charCodeAt) + formatação de exibição =====
+  const formatCPF = (val: string) => {
+    const d = onlyDigits(val).slice(0, 11);
+    const p1 = d.substring(0, 3);
+    const p2 = d.substring(3, 6);
+    const p3 = d.substring(6, 9);
+    const p4 = d.substring(9, 11);
+    if (d.length <= 3) return p1;
+    if (d.length <= 6) return `${p1}.${p2}`;
+    if (d.length <= 9) return `${p1}.${p2}.${p3}`;
+    return `${p1}.${p2}.${p3}-${p4}`;
+  };
+
+  const isValidCPF = (val: string) => {
+    const cpf = onlyDigits(val);
+    if (cpf.length !== 11) return false;
+    if (/^(\d)\1{10}$/.test(cpf)) return false;
+
+    const digit = (i: number) => cpf.charCodeAt(i) - 48; // '0' => 48
+    let sum = 0;
+    for (let i = 0; i < 9; i++) sum += digit(i) * (10 - i);
+    let d1 = (sum * 10) % 11;
+    if (d1 === 10) d1 = 0;
+    if (d1 !== digit(9)) return false;
+
+    sum = 0;
+    for (let i = 0; i < 10; i++) sum += digit(i) * (11 - i);
+    let d2 = (sum * 10) % 11;
+    if (d2 === 10) d2 = 0;
+    if (d2 !== digit(10)) return false;
+
+    return true;
+  };
+
+  const handleDocTipoChange = (tipo: DocTipo) => {
+    setDocTipo(tipo);
+    if (tipo === "OUTROS") {
+      if (!solicitanteDocumento.trim()) setSolicitanteDocumento(MSG_OUTROS_DOC);
+    } else {
+      // CPF selecionado: se estava a mensagem de outros, limpa
+      if (solicitanteDocumento.trim() === MSG_OUTROS_DOC) setSolicitanteDocumento("");
+    }
+  };
+
+  // ponto de referência: só preencher com mensagem quando marcado
+  React.useEffect(() => {
+    if (pontoRefNaoInformado) {
+      setPontoRef(MSG_NAO_INF);
+    } else {
+      if (pontoRef.trim() === MSG_NAO_INF) setPontoRef("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pontoRefNaoInformado]);
+
+  // titular da conta: preencher o campo nome quando marcado; restaurar quando desmarcar
+  React.useEffect(() => {
+    if (titularConta) {
+      prevNomeRef.current = solicitanteNome; // guarda o que estava
+      setSolicitanteNome("TITULAR DA CONTA");
+    } else {
+      if (solicitanteNome === "TITULAR DA CONTA") {
+        setSolicitanteNome(prevNomeRef.current || "");
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [titularConta]);
+
   function validatePapeleta(): string | null {
-    // === obrigatórios do solicitante
+    // obrigatórios
     if (!solicitanteNome.trim()) return "Informe o nome do solicitante.";
     if (!solicitanteDocumento.trim()) return "Informe o documento do solicitante.";
 
-    if (!matricula.trim()) return "Informe a matrícula.";
-    if (!telefone.trim()) return "Informe o telefone de contato.";
-    // ✅ valida exatamente como o CHECK do banco (após sanitizar)
-    const telDb = phoneClean(telefone);
-    if (!PHONE_ALLOWED_RE.test(telDb)) {
-      return "Telefone inválido. Use apenas números, espaço, +, (, ) e -, com 8 a 20 caracteres.";
+    if (docTipo === "CPF") {
+      if (!isValidCPF(solicitanteDocumento)) {
+        setCpfModalOpen(true);
+        return "CPF inválido. Corrija ou selecione 'OUTROS DOCUMENTO'.";
+      }
     }
+
+    if (!matricula.trim()) return "Informe a matrícula.";
+
+    // Telefone: obrigatório, exceto quando marcado 'não informado'
+    if (!telefoneNaoInformado) {
+      if (!telefone.trim()) return "Informe o telefone de contato.";
+      const telDb = phoneClean(telefone);
+      if (!PHONE_ALLOWED_RE.test(telDb)) {
+        return "Telefone inválido. Use apenas números, espaço, +, (, ) e -, com 8 a 20 caracteres.";
+      }
+    }
+
     if (!bairro.trim()) return "Informe o bairro.";
     if (!rua.trim()) return "Informe a rua.";
     if (!numero.trim()) return "Informe o número.";
-    if (!pontoRef.trim()) return "Informe o ponto de referência.";
+
+    // Ponto de referência: obrigatório, exceto quando marcado 'não informado'
+    if (!pontoRefNaoInformado) {
+      if (!pontoRef.trim()) return "Informe o ponto de referência.";
+    }
+
     if (!pdfOrdem) return "É obrigatório anexar o PDF da papeleta de religação.";
     if (observacaoOpt === "OUTROS" && !toUpper(observacaoOutros).trim()) {
       return "Informe a observação quando selecionar OUTROS.";
@@ -288,7 +391,7 @@ export default function ReconnectionOrderForm() {
     return null;
   }
 
-  // salvar papeleta (upload em paralelo + INSERT único)
+  // salvar papeleta
   async function doSave() {
     try {
       const { data: userData, error: userErr } = await supabase.auth.getUser();
@@ -299,46 +402,47 @@ export default function ReconnectionOrderForm() {
       const id = crypto.randomUUID();
       const base = `religacoes/${user.id}/${id}`;
 
-      // uploads em paralelo
-      const [ordemPath, compPath] = await Promise.all([
+      // uploads
+      const [ordemRes, compRes] = await Promise.all([
         pdfOrdem
           ? supabase.storage
               .from("ordens-pdfs")
               .upload(`${base}/ordem.pdf`, pdfOrdem, {
                 upsert: true,
-                contentType: pdfOrdem.type ?? "application/pdf",
+                contentType: pdfOrdem.type || "application/pdf",
               })
-              .then((r) => r.data?.path ?? null)
-          : Promise.resolve(null),
+          : Promise.resolve({ data: null }),
         pdfComprovante
           ? supabase.storage
               .from("ordens-pdfs")
               .upload(`${base}/comprovante.pdf`, pdfComprovante, {
                 upsert: true,
-                contentType: pdfComprovante.type ?? "application/pdf",
+                contentType: pdfComprovante.type || "application/pdf",
               })
-              .then((r) => r.data?.path ?? null)
-          : Promise.resolve(null),
+          : Promise.resolve({ data: null }),
       ]);
+
+      const ordemPath = (ordemRes as any)?.data?.path ?? null;
+      const compPath = (compRes as any)?.data?.path ?? null;
 
       if (!ordemPath) throw new Error("Falha ao salvar o PDF obrigatório.");
 
-      // ✅ telefone sanitizado para obedecer o CHECK
-      const telefoneDb = phoneClean(telefone);
+      // telefone sanitizado/nullable
+      const telefoneDb = telefoneNaoInformado ? null : phoneClean(telefone);
+      // documento sanitizado
+      const solicitanteDocumentoDb =
+        docTipo === "CPF" ? onlyDigits(solicitanteDocumento) : toUpper(solicitanteDocumento.trim());
 
-      // INSERT único com os paths + NOVOS CAMPOS (solicitante)
       const { error: insErr } = await supabase.from("ordens_religacao").insert({
         id,
-        // --- solicitante
         solicitante_nome: toUpper(solicitanteNome.trim()),
-        solicitante_documento: toUpper(solicitanteDocumento.trim()),
-        // --- demais campos
+        solicitante_documento: solicitanteDocumentoDb,
         matricula: matricula.trim(),
         telefone: telefoneDb,
         bairro: bairro.trim(),
         rua: rua.trim(),
         numero: numero.trim(),
-        ponto_referencia: pontoRef.trim(),
+        ponto_referencia: pontoRefNaoInformado ? null : pontoRef.trim(),
         prioridade,
         status: "liberacao_pendente",
         precisa_troca_hidrometro: null,
@@ -350,8 +454,8 @@ export default function ReconnectionOrderForm() {
 
       setMsg({ kind: "ok", text: "Papeleta salva como PENDENTE DE LIBERAÇÃO." });
       clear();
-    } catch (e: any) {
-      setMsg({ kind: "err", text: e?.message ?? "Falha ao salvar." });
+    } catch (e) {
+      setMsg({ kind: "err", text: errText(e, "Falha ao salvar.") });
     } finally {
       setSaving(false);
       setTimeout(() => setMsg(null), 1800);
@@ -363,15 +467,14 @@ export default function ReconnectionOrderForm() {
 
     if (!canCreate) {
       setPermText("Apenas ADM, DIRETOR, COORDENADOR e OPERADOR podem criar papeletas de religação.");
-      setClearOnPermClose(true);
       setPermModalOpen(true);
       return;
     }
 
     const m = formatMatricula();
-    const err = validatePapeleta();
-    if (err) {
-      setMsg({ kind: "err", text: err });
+    const errorMsg = validatePapeleta();
+    if (errorMsg) {
+      setMsg({ kind: "err", text: errorMsg || "Dados incompletos." });
       setTimeout(() => setMsg(null), 2000);
       return;
     }
@@ -417,7 +520,7 @@ export default function ReconnectionOrderForm() {
     doSave();
   }
 
-  // prioridade
+  // prioridade (senha 29101993 como antes)
   function handleClickPrioridade() {
     if (prioridade) {
       setPrioridade(false);
@@ -458,13 +561,10 @@ export default function ReconnectionOrderForm() {
       if (upErr) throw upErr;
 
       setPendentes((prev) => prev.filter((p) => p.id !== id));
-      setMsg({
-        kind: "ok",
-        text: `Liberação confirmada (${precisaTroca ? "SIM" : "NÃO"}).`,
-      });
+      setMsg({ kind: "ok", text: `Liberação confirmada (${precisaTroca ? "SIM" : "NÃO"}).` });
       setTimeout(() => setMsg(null), 1500);
-    } catch (e: any) {
-      setMsg({ kind: "err", text: e?.message ?? "Falha ao liberar." });
+    } catch (e) {
+      setMsg({ kind: "err", text: errText(e, "Falha ao liberar.") });
       setTimeout(() => setMsg(null), 2000);
     }
   }
@@ -486,10 +586,11 @@ export default function ReconnectionOrderForm() {
       <div className="mt-5 flex gap-2">
         <button
           onClick={() => setSubTab("PAPELETA")}
-          className={`px-3 py-2 rounded-lg text-sm transition border
-            ${subTab === "PAPELETA"
+          className={`px-3 py-2 rounded-lg text-sm transition border ${
+            subTab === "PAPELETA"
               ? "bg-emerald-500/20 text-emerald-200 border-emerald-400/40"
-              : "bg-white/5 text-slate-300 border-white/10 hover:bg-white/10"}`}
+              : "bg-white/5 text-slate-300 border-white/10 hover:bg-white/10"
+          }`}
         >
           Nova Papeleta
         </button>
@@ -497,16 +598,16 @@ export default function ReconnectionOrderForm() {
           onClick={() => {
             if (!canLiberacao) {
               setPermText("Acesso restrito: apenas ADM, DIRETOR e COORDENADOR podem acessar a Liberação de Papeleta.");
-              setClearOnPermClose(false);
               setPermModalOpen(true);
               return;
             }
             setSubTab("LIBERACAO");
           }}
-          className={`px-3 py-2 rounded-lg text-sm transition border
-            ${subTab === "LIBERACAO"
+          className={`px-3 py-2 rounded-lg text-sm transition border ${
+            subTab === "LIBERACAO"
               ? "bg-indigo-500/20 text-indigo-200 border-indigo-400/40"
-              : "bg-white/5 text-slate-300 border-white/10 hover:bg-white/10"}`}
+              : "bg-white/5 text-slate-300 border-white/10 hover:bg-white/10"
+          }`}
         >
           Liberação de Papeleta
         </button>
@@ -545,21 +646,35 @@ export default function ReconnectionOrderForm() {
                   <div>
                     <label className="block text-sm text-slate-300 mb-1">Telefone de contato *</label>
                     <input
-                      className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40"
+                      className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 disabled:opacity-60"
                       placeholder="+55 27 00000-0000"
                       value={telefone}
                       onChange={handleTelefoneChange}
                       onBlur={handleTelefoneBlur}
                       inputMode="tel"
                       autoComplete="tel"
+                      disabled={telefoneNaoInformado}
                     />
-                    <p className="text-xs text-slate-400 mt-1">
-                      Dica: pode digitar só o número (ex.: <b>999999999</b>) que eu completo com <b>+55 27</b>.
-                    </p>
+                    {/* Checkbox abaixo do input */}
+                    <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-300">
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={telefoneNaoInformado}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setTelefoneNaoInformado(checked);
+                            if (checked) setTelefone(MSG_NAO_INF);
+                            else if (telefone.trim() === MSG_NAO_INF) setTelefone("");
+                          }}
+                        />
+                        <span>Não informado pelo requerente</span>
+                      </label>
+                    </div>
                   </div>
                 </div>
 
-                {/* Coluna direita: Prioridade (card) */}
+                {/* Coluna direita: Prioridade (senha 29101993) */}
                 <div className="rounded-xl bg-slate-950/60 border border-white/10 p-3">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-slate-300">Prioridade</span>
@@ -588,7 +703,7 @@ export default function ReconnectionOrderForm() {
               </div>
             </section>
 
-            {/* === NOVA Seção 1.1: Solicitante === */}
+            {/* Seção 1.1: Solicitante */}
             <section className="pt-8 space-y-4">
               <h3 className="text-sm font-semibold text-slate-300">Solicitante</h3>
 
@@ -602,26 +717,69 @@ export default function ReconnectionOrderForm() {
                     onChange={(e) => setSolicitanteNome(toUpper(e.target.value))}
                     onPaste={(e: React.ClipboardEvent<HTMLInputElement>) => {
                       e.preventDefault();
-                      setSolicitanteNome(toUpper(e.clipboardData?.getData("text") || ""));
+                      setSolicitanteNome(toUpper(e.clipboardData?.getData("text")));
                     }}
                     autoCapitalize="characters"
                     autoCorrect="off"
                   />
+                  {/* Titular da conta */}
+                  <div className="mt-2">
+                    <label className="inline-flex items-center gap-2 text-sm text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={titularConta}
+                        onChange={(e) => setTitularConta(e.target.checked)}
+                      />
+                      <span>Solicitante é o <b>titular da conta</b></span>
+                    </label>
+                  </div>
                 </div>
+
                 <div>
                   <label className="block text-sm text-slate-300 mb-1">Documento do solicitante *</label>
                   <input
-                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-                    placeholder="EX.: CPF/CNPJ/IDENTIDADE"
-                    value={solicitanteDocumento}
-                    onChange={(e) => setSolicitanteDocumento(toUpper(e.target.value))}
-                    onPaste={(e: React.ClipboardEvent<HTMLInputElement>) => {
-                      e.preventDefault();
-                      setSolicitanteDocumento(toUpper(e.clipboardData?.getData("text") || ""));
+                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40"
+                    placeholder={docTipo === "CPF" ? "000.000.000-00" : "EX.: RG / PASSAPORTE / ETC."}
+                    value={docTipo === "CPF" ? formatCPF(solicitanteDocumento) : toUpper(solicitanteDocumento)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (docTipo === "CPF") {
+                        // mantém máscara enquanto digita
+                        setSolicitanteDocumento(formatCPF(v));
+                      } else {
+                        setSolicitanteDocumento(toUpper(v));
+                      }
+                    }}
+                    onBlur={() => {
+                      if (docTipo === "CPF" && solicitanteDocumento.trim() && !isValidCPF(solicitanteDocumento)) {
+                        setCpfModalOpen(true);
+                      } else if (docTipo === "CPF") {
+                        // garante máscara final correta
+                        setSolicitanteDocumento(formatCPF(solicitanteDocumento));
+                      }
                     }}
                     autoCapitalize="characters"
                     autoCorrect="off"
                   />
+                  {/* Rádios embaixo do input */}
+                  <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-300">
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="radio"
+                        checked={docTipo === "CPF"}
+                        onChange={() => handleDocTipoChange("CPF")}
+                      />
+                      <span>CPF (validação obrigatória)</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="radio"
+                        checked={docTipo === "OUTROS"}
+                        onChange={() => handleDocTipoChange("OUTROS")}
+                      />
+                      <span>OUTROS DOCUMENTO (sem restrição)</span>
+                    </label>
+                  </div>
                 </div>
               </div>
             </section>
@@ -658,14 +816,27 @@ export default function ReconnectionOrderForm() {
                     onChange={(e) => setNumero(toUpper(e.target.value))}
                   />
                 </div>
+
+                {/* Ponto de referência */}
                 <div>
                   <label className="block text-sm text-slate-300 mb-1">Ponto de referência *</label>
                   <input
-                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase disabled:opacity-60"
                     placeholder="EX.: PRÓX. AO POSTO X"
                     value={pontoRef}
                     onChange={(e) => setPontoRef(toUpper(e.target.value))}
+                    disabled={pontoRefNaoInformado}
                   />
+                  <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-300">
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={pontoRefNaoInformado}
+                        onChange={(e) => setPontoRefNaoInformado(e.target.checked)}
+                      />
+                      <span>Não informado pelo requerente</span>
+                    </label>
+                  </div>
                 </div>
               </div>
             </section>
@@ -680,7 +851,7 @@ export default function ReconnectionOrderForm() {
                   <select
                     className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
                     value={observacaoOpt}
-                    onChange={(e) => setObservacaoOpt((e.target.value || "").toUpperCase() as ObsOpt)}
+                    onChange={(e) => setObservacaoOpt((toUpper(e.target.value) as ObsOpt) || "")}
                   >
                     <option value="">SELECIONE...</option>
                     <option value="SEM HIDROMETRO NO LOCAL">SEM HIDROMETRO NO LOCAL</option>
@@ -700,7 +871,7 @@ export default function ReconnectionOrderForm() {
                       onChange={(e) => setObservacaoOutros(toUpper(e.target.value))}
                       onPaste={(e: React.ClipboardEvent<HTMLInputElement>) => {
                         e.preventDefault();
-                        const text = e.clipboardData?.getData("text") ?? "";
+                        const text = e.clipboardData?.getData("text");
                         setObservacaoOutros(toUpper(text));
                       }}
                       autoCapitalize="characters"
@@ -791,7 +962,6 @@ export default function ReconnectionOrderForm() {
             </button>
           </div>
 
-          {/* >>> Responsividade da tabela: wrapper com overflow horizontal + truncates nos campos longos */}
           <div className="rounded-xl ring-1 ring-white/10">
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
@@ -861,7 +1031,6 @@ export default function ReconnectionOrderForm() {
               </table>
             </div>
           </div>
-          {/* <<< /Responsividade da tabela */}
         </div>
       )}
 
@@ -906,6 +1075,68 @@ export default function ReconnectionOrderForm() {
         </div>
       )}
 
+      {/* Modal CPF inválido */}
+      {cpfModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-sm">
+            <h3 className="text-lg font-semibold text-white mb-2">CPF inválido</h3>
+            <p className="text-slate-300 text-sm mb-4">
+              O CPF informado parece inválido. Corrija o número ou selecione a opção <b>OUTROS DOCUMENTO</b>.
+            </p>
+            <div className="mt-3 flex justify-end gap-3">
+              <button
+                onClick={() => setCpfModalOpen(false)}
+                className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white text-sm"
+              >
+                Corrigir CPF
+              </button>
+              <button
+                onClick={() => {
+                  handleDocTipoChange("OUTROS");
+                  setCpfModalOpen(false);
+                }}
+                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm"
+              >
+                Usar “OUTROS DOCUMENTO”
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de permissão negada */}
+      {permModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-lg text-center">
+            <h3 className="text-lg font-semibold text-white">Permissão necessária</h3>
+            <p className="text-slate-300 text-sm mt-2">{permText}</p>
+            <div className="mt-5">
+              <button
+                onClick={() => {
+                  clear();
+                  setPermModalOpen(false);
+                }}
+                className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white text-sm"
+              >
+                Entendi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast */}
+      {msg && (
+        <div
+          className={`fixed bottom-5 right-5 px-4 py-2 rounded-lg shadow-lg text-sm z-50 ${
+            msg.kind === "ok" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
+          }`}
+        >
+          {msg.text}
+        </div>
+      )}
+
+      {/* Modal de prioridade */}
       {prioridadeModalOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-sm">
@@ -933,42 +1164,20 @@ export default function ReconnectionOrderForm() {
             {senhaErro && <div className="mt-2 text-sm text-rose-400">{senhaErro}</div>}
 
             <div className="mt-5 flex justify-end gap-3">
-              <button onClick={fecharModalPrioridade} className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200">
+              <button
+                onClick={fecharModalPrioridade}
+                className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200"
+              >
                 Cancelar
               </button>
-              <button onClick={confirmarSenhaDiretor} className="px-4 py-2 rounded-lg bg-fuchsia-600 hover:bg-fuchsia-500 text-white">
+              <button
+                onClick={confirmarSenhaDiretor}
+                className="px-4 py-2 rounded-lg bg-fuchsia-600 hover:bg-fuchsia-500 text-white"
+              >
                 Confirmar
               </button>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Modal de permissão negada */}
-      {permModalOpen && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-lg text-center">
-            <h3 className="text-lg font-semibold text-white">Permissão necessária</h3>
-            <p className="text-slate-300 text-sm mt-2">{permText}</p>
-            <div className="mt-5">
-              <button
-                onClick={() => { clear(); setPermModalOpen(false); }}
-                className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white text-sm"
-              >
-                Entendi
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Toast */}
-      {msg && (
-        <div
-          className={`fixed bottom-5 right-5 px-4 py-2 rounded-lg shadow-lg text-sm z-50
-            ${msg.kind === "ok" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"}`}
-        >
-          {msg.text}
         </div>
       )}
     </div>

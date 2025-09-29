@@ -1,6 +1,7 @@
 import * as React from "react";
 import supabase from "../../lib/supabase";
 import ListFilterBar, { ListFilter } from "../../components/filters/ListFilterBar";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 type PendRow = {
   id: string;
@@ -16,7 +17,24 @@ type PendRow = {
   precisa_troca_hidrometro: boolean | null;
   observacao: string | null;
   telefone: string | null;
+  solicitante_nome: string | null;
+  solicitante_documento: string | null;
 };
+
+const DEFAULT_EMPTY = "NÃO INFORMADO";
+function getEmptyLabel(field?: string) {
+  try {
+    const raw = localStorage.getItem("emptyLabelMap");
+    if (raw) {
+      const map = JSON.parse(raw) as Record<string, string>;
+      if (field && typeof map[field] === "string" && map[field].trim()) return map[field];
+      if (typeof map["*"] === "string" && map["*"].trim()) return map["*"];
+    }
+  } catch {}
+  return DEFAULT_EMPTY;
+}
+const withFallback = (v?: string | null, field?: string) =>
+  v && v.toString().trim() !== "" ? v.toString() : getEmptyLabel(field);
 
 // normalização
 const norm = (s?: string | null) =>
@@ -57,7 +75,7 @@ function HidrometroBadge({ value }: { value: boolean | null }) {
       </span>
     );
   }
-  return <span className="text-slate-400 text-xs whitespace-nowrap">—</span>;
+  return <span className="text-slate-400 text-xs whitespace-nowrap">{getEmptyLabel("numero_hidrometro")}</span>;
 }
 
 // ===== Perfis autorizados a ATIVAR
@@ -84,15 +102,12 @@ export default function PendingReconnectionsTable() {
   >(null);
   const [savingCell, setSavingCell] = React.useState(false);
 
-  const fmtDateTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR") : "—");
-  const fmtTel = (t?: string | null) => (t && t.trim() ? t : "—");
+  const fmtDateTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR") : getEmptyLabel("datahora"));
+  const fmtTel = (t?: string | null) => withFallback(t, "telefone");
 
   // ===== Papel do usuário e checagem de permissão (para ativar)
   const [userRole, setUserRole] = React.useState<string>("VISITANTE");
-  const canActivate = React.useMemo(
-    () => ALLOWED_ACTIVATE.has((userRole || "VISITANTE").toUpperCase()),
-    [userRole]
-  );
+  const canActivate = React.useMemo(() => ALLOWED_ACTIVATE.has((userRole || "VISITANTE").toUpperCase()), [userRole]);
 
   const [permModalOpen, setPermModalOpen] = React.useState(false);
   const [permText, setPermText] = React.useState("Apenas TERCEIRIZADA e ADM podem ativar papeletas.");
@@ -107,11 +122,7 @@ export default function PendingReconnectionsTable() {
           setUserRole("VISITANTE");
           return;
         }
-        const { data, error } = await supabase
-          .from("app_users")
-          .select("papel")
-          .eq("id", user.id)
-          .single();
+        const { data, error } = await supabase.from("app_users").select("papel").eq("id", user.id).single();
         if (error) throw error;
         setUserRole((data?.papel || "VISITANTE").toUpperCase());
       } catch {
@@ -143,6 +154,8 @@ export default function PendingReconnectionsTable() {
             "precisa_troca_hidrometro",
             "observacao",
             "telefone",
+            "solicitante_nome",
+            "solicitante_documento",
           ].join(", ")
         )
         .eq("status", "aguardando_religacao");
@@ -151,11 +164,11 @@ export default function PendingReconnectionsTable() {
       if (filter.q.trim() !== "") {
         const q = filter.q.trim();
         query = query.or(
-          `matricula.ilike.%${q}%,bairro.ilike.%${q}%,rua.ilike.%${q}%,telefone.ilike.%${q}%`
+          `matricula.ilike.%${q}%,bairro.ilike.%${q}%,rua.ilike.%${q}%,telefone.ilike.%${q}%,solicitante_nome.ilike.%${q}%,solicitante_documento.ilike.%${q}%`
         );
       }
 
-      // +24h OU intervalo de datas (mutuamente exclusivos)
+      // +24h OU intervalo de datas
       if (over24h) {
         const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
         query = query.lte("created_at", cutoff);
@@ -184,7 +197,6 @@ export default function PendingReconnectionsTable() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Recarrega quando alterna +24h
   React.useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -201,9 +213,9 @@ export default function PendingReconnectionsTable() {
     } else if (field === "bairro") {
       setEditing({ id: row.id, field: "bairro", value: row.bairro });
     } else if (field === "ponto_referencia") {
-      setEditing({ id: row.id, field: "ponto_referencia", value: (row.ponto_referencia ?? "") });
+      setEditing({ id: row.id, field: "ponto_referencia", value: row.ponto_referencia ?? "" });
     } else if (field === "telefone") {
-      setEditing({ id: row.id, field: "telefone", value: (row.telefone ?? "") });
+      setEditing({ id: row.id, field: "telefone", value: row.telefone ?? "" });
     }
   }
 
@@ -219,9 +231,7 @@ export default function PendingReconnectionsTable() {
         const numero = (editing.value2 || "").toUpperCase().trim();
         const { error } = await supabase.from("ordens_religacao").update({ rua, numero }).eq("id", id);
         if (error) throw error;
-        setRows((prev) =>
-          prev.map((r) => (r.id === id ? { ...r, rua, numero } : r))
-        );
+        setRows((prev) => prev.map((r) => (r.id === id ? { ...r, rua, numero } : r)));
         setMsg({ kind: "ok", text: "Rua e número atualizados." });
       } else {
         const field = editing.field;
@@ -229,9 +239,7 @@ export default function PendingReconnectionsTable() {
         const patch: any = { [field]: value };
         const { error } = await supabase.from("ordens_religacao").update(patch).eq("id", id);
         if (error) throw error;
-        setRows((prev) =>
-          prev.map((r) => (r.id === id ? { ...r, [field]: value } as PendRow : r))
-        );
+        setRows((prev) => prev.map((r) => (r.id === id ? ({ ...r, [field]: value } as PendRow) : r)));
         setMsg({ kind: "ok", text: "Dados atualizados." });
       }
       setTimeout(() => setMsg(null), 1500);
@@ -253,24 +261,6 @@ export default function PendingReconnectionsTable() {
     }
   }
 
-  // ====== IMPRESSÃO (abre PDF direto) ======
-  function renderImprimirCell(row: PendRow) {
-    if (!row.pdf_ordem_path) return "—";
-    const { data } = supabase.storage.from("ordens-pdfs").getPublicUrl(row.pdf_ordem_path);
-    const pdfUrl = data?.publicUrl;
-    if (!pdfUrl) return <span className="text-slate-400 text-xs">Sem link</span>;
-    return (
-      <a
-        href={pdfUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30 whitespace-nowrap"
-      >
-        Imprimir
-      </a>
-    );
-  }
-
   // ====== FLUXO ATIVAR ======
   const [modalAtivarSim, setModalAtivarSim] = React.useState<{
     open: boolean;
@@ -290,13 +280,11 @@ export default function PendingReconnectionsTable() {
   }>({ open: false });
 
   function onClickAtivar(row: PendRow) {
-    // Guarda de permissão antes de abrir modal
     if (!canActivate) {
       setPermText("Apenas TERCEIRIZADA e ADM podem ativar papeletas.");
       setPermModalOpen(true);
       return;
     }
-
     if (row.precisa_troca_hidrometro === true) {
       setModalAtivarSim({
         open: true,
@@ -327,14 +315,12 @@ export default function PendingReconnectionsTable() {
 
     const id = modalAtivarSim.id;
     const numeroNovo = (modalAtivarSim.novoNumero ?? "").trim();
-
     const baseObs = (modalAtivarSim.observacao ?? "").toUpperCase();
     const extra = numeroNovo ? (baseObs ? ` | NOVO HIDRÔMETRO: ${numeroNovo}` : `NOVO HIDRÔMETRO: ${numeroNovo}`) : "";
     const novaObs = (baseObs + extra).trim();
 
     try {
       setModalAtivarSim((m) => ({ ...m, saving: true }));
-
       const { error } = await supabase
         .from("ordens_religacao")
         .update({ status: "ativa", ativa_em: new Date().toISOString(), observacao: novaObs })
@@ -375,7 +361,6 @@ export default function PendingReconnectionsTable() {
     const id = modalAtivarNao.id;
     try {
       setModalAtivarNao((m) => ({ ...m, saving: true }));
-
       const { error } = await supabase
         .from("ordens_religacao")
         .update({ status: "ativa", ativa_em: new Date().toISOString() })
@@ -405,8 +390,14 @@ export default function PendingReconnectionsTable() {
     }
   }
 
-  // ====== PRIORIDADE (toggle com senha por duplo-clique) ======
-  const [modalPrioridade, setModalPrioridade] = React.useState<{ open: boolean; id?: string; atual?: boolean; senha?: string; saving?: boolean }>({ open: false });
+  // ====== PRIORIDADE (toggle com senha por duplo-clique)
+  const [modalPrioridade, setModalPrioridade] = React.useState<{
+    open: boolean;
+    id?: string;
+    atual?: boolean;
+    senha?: string;
+    saving?: boolean;
+  }>({ open: false });
   function onDblClickPrioridade(row: PendRow) {
     setModalPrioridade({ open: true, id: row.id, atual: row.prioridade, senha: "", saving: false });
   }
@@ -433,15 +424,116 @@ export default function PendingReconnectionsTable() {
     }
   }
 
-  // Evitar whitespace/comentários dentro do <colgroup> (elimina warnings do React)
+  // ====== IMPRESSÃO: carimbar DENTRO do PDF (1ª página) e abrir em nova aba (sem auto-print)
+  async function openPrintWindow(row: PendRow) {
+    if (!row.pdf_ordem_path) {
+      setMsg({ kind: "err", text: "PDF da ordem não encontrado." });
+      setTimeout(() => setMsg(null), 1800);
+      return;
+    }
+
+    const { data } = supabase.storage.from("ordens-pdfs").getPublicUrl(row.pdf_ordem_path);
+    const pdfUrl = data?.publicUrl;
+    if (!pdfUrl) {
+      setMsg({ kind: "err", text: "Não foi possível obter o PDF para impressão." });
+      setTimeout(() => setMsg(null), 2000);
+      return;
+    }
+
+    // Abre janela primeiro para evitar bloqueio de pop-up
+    const win = window.open("", "_blank", "width=1024,height=768");
+    try {
+      if (win) (win as any).opener = null;
+    } catch {}
+
+    // Carrega PDF original
+    const ab: ArrayBuffer = await fetch(pdfUrl).then((r) => r.arrayBuffer());
+    const pdfDoc = await PDFDocument.load(ab);
+    const pages = pdfDoc.getPages();
+    if (pages.length === 0) {
+      setMsg({ kind: "err", text: "PDF inválido: sem páginas." });
+      setTimeout(() => setMsg(null), 2000);
+      if (win) win.close();
+      return;
+    }
+    const page = pages[0]!;
+    const { width, height } = page.getSize();
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+    const tel = withFallback(row.telefone, "telefone").trim();
+    const nome = withFallback(row.solicitante_nome, "solicitante").trim();
+    const doc = withFallback(row.solicitante_documento, "documento").trim();
+    const pref = withFallback(row.ponto_referencia, "ponto_referencia").trim();
+    const obs = withFallback(row.observacao, "observacao").trim();
+    const dataHora = row.created_at ? new Date(row.created_at).toLocaleString("pt-BR") : getEmptyLabel("datahora");
+
+    // Bloco central — ajuste as dimensões conforme o layout do seu PDF
+    const boxW = Math.min(420, width - 72 * 2);
+    const boxH = 130;
+    const boxX = (width - boxW) / 2;
+    const boxY = height * 0.5 - boxH / 2;
+
+    page.drawRectangle({
+      x: boxX,
+      y: boxY,
+      width: boxW,
+      height: boxH,
+      color: rgb(1, 1, 1),
+      opacity: 0.96,
+      borderColor: rgb(0.85, 0.88, 0.92),
+      borderWidth: 1,
+    });
+
+    page.drawText("DADOS DO SOLICITANTE", {
+      x: boxX + 12,
+      y: boxY + boxH - 18,
+      size: 12,
+      font: fontBold,
+      color: rgb(0, 0, 0),
+    });
+
+    let y = boxY + boxH - 36;
+    const line = (label: string, value: string) => {
+      page.drawText(label + ":", { x: boxX + 12, y, size: 10, font: fontBold, color: rgb(0, 0, 0) });
+      page.drawText(value, { x: boxX + 120, y, size: 10, font, color: rgb(0, 0, 0) });
+      y -= 14;
+    };
+
+    line("Solicitante", nome);
+    line("Documento", doc);
+    line("Telefone", tel);
+    line("Ponto ref.", pref);
+    line("Criada em", dataHora);
+
+    const obsLabel = "Observações:";
+    page.drawText(obsLabel, { x: boxX + 12, y, size: 10, font: fontBold, color: rgb(0, 0, 0) });
+    const maxPerLine = 60;
+    const obs1 = obs.slice(0, maxPerLine);
+    const obs2 = obs.length > maxPerLine ? obs.slice(maxPerLine, maxPerLine * 2) : "";
+    page.drawText(obs1, { x: boxX + 120, y, size: 10, font, color: rgb(0, 0, 0) });
+    if (obs2) page.drawText(obs2, { x: boxX + 120, y: y - 12, size: 10, font, color: rgb(0, 0, 0) });
+
+    // Gera o PDF e abre na aba (sem auto-print)
+    const bytes = await pdfDoc.save(); // Uint8Array
+    const abuf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    const blob = new Blob([abuf], { type: "application/pdf" });
+    const blobUrl = URL.createObjectURL(blob);
+
+    if (win) {
+      win.location.href = blobUrl; // usuário usa Ctrl+P quando quiser
+    } else {
+      window.open(blobUrl, "_blank", "noopener,noreferrer");
+    }
+  }
+
+  // Evitar whitespace/comentários dentro do <colgroup>
+  // ORDEM: Matrícula (fixa) | Bairro | Rua e nº | Ponto ref. | Telefone | Solicitante | Prioridade | Status/Marcar | Ordem (PDF) | Criado em | Trocar Hidrômetro?
   const colWidths = React.useMemo(
-    () => ["w-28", "w-40", "w-[320px]", "w-[300px]", "w-40", "w-28", "w-56", "w-28", "w-40", "w-40"],
+    () => ["w-32", "w-40", "w-[320px]", "w-[300px]", "w-40", "w-[260px]", "w-28", "w-56", "w-32", "w-40", "w-40"],
     []
   );
-  const colEls = React.useMemo(
-    () => colWidths.map((cls, i) => <col key={i} className={cls} />),
-    [colWidths]
-  );
+  const colEls = React.useMemo(() => colWidths.map((cls, i) => <col key={i} className={cls} />), [colWidths]);
 
   return (
     <div className="rounded-2xl bg-slate-900/50 ring-1 ring-white/10 p-4">
@@ -456,19 +548,14 @@ export default function PendingReconnectionsTable() {
             type="button"
             onClick={() => setOver24h((v) => !v)}
             className={`px-3 py-1.5 rounded-lg border text-xs ${
-              over24h
-                ? "bg-rose-600 text-white border-rose-500 hover:bg-rose-500"
-                : "bg-rose-600/90 text-white border-rose-500 hover:bg-rose-600"
+              over24h ? "bg-rose-600 text-white border-rose-500 hover:bg-rose-500" : "bg-rose-600/90 text-white border-rose-500 hover:bg-rose-600"
             }`}
             title="+24h: mostrar apenas papeletas criadas há mais de 24 horas"
           >
             +24h
           </button>
 
-          <button
-            onClick={load}
-            className="text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10"
-          >
+          <button onClick={load} className="text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10">
             {loading ? "Atualizando…" : "Atualizar"}
           </button>
         </div>
@@ -491,11 +578,7 @@ export default function PendingReconnectionsTable() {
       )}
 
       {msg && (
-        <div
-          className={`mb-3 text-sm px-3 py-2 rounded-lg ${
-            msg.kind === "ok" ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"
-          }`}
-        >
+        <div className={`mb-3 text-sm px-3 py-2 rounded-lg ${msg.kind === "ok" ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"}`}>
           {msg.text}
         </div>
       )}
@@ -503,17 +586,20 @@ export default function PendingReconnectionsTable() {
       {/* >>> Container com rolagem vertical e horizontal */}
       <div className="rounded-xl ring-1 ring-white/10 max-h-[60vh] overflow-x-auto overflow-y-auto">
         {/* >>> Tabela com largura mínima para habilitar scroll horizontal */}
-        <table className="min-w-[1200px] w-max text-sm table-auto">
+        <table className="min-w-[1360px] w-max text-sm table-auto">
           <colgroup>{colEls}</colgroup>
 
-          {/* >>> Cabeçalho fixo durante o scroll vertical */}
-          <thead className="sticky top-0 z-20 bg-slate-900/95 text-slate-100 backdrop-blur supports-backdrop-blur:bg-slate-900/80 borde-white/10">
+          {/* >>> Cabeçalho fixo (apenas Matrícula fixa à esquerda) */}
+          <thead className="sticky top-0 z-20 bg-slate-900/95 text-slate-100 backdrop-blur border-white/10">
             <tr>
-              <th className="text-left font-medium py-2 px-3">Matrícula</th>
+              <th className="sticky left-0 z-30 bg-slate-900/95 backdrop-blur px-3 py-2 text-center font-medium border-r border-white/10">
+                Matrícula
+              </th>
               <th className="text-left font-medium py-2 px-3">Bairro</th>
               <th className="text-left font-medium py-2 px-3">Rua e nº</th>
               <th className="text-left font-medium py-2 px-3">Ponto ref.</th>
               <th className="text-left font-medium py-2 px-3">Telefone</th>
+              <th className="text-left font-medium py-2 px-3">Solicitante</th>
               <th className="text-left font-medium py-2 px-3">Prioridade</th>
               <th className="text-center font-medium py-2 px-3">Status / Marcar</th>
               <th className="text-center font-medium py-2 px-3">Ordem (PDF)</th>
@@ -525,14 +611,13 @@ export default function PendingReconnectionsTable() {
           <tbody className="divide-y divide-white/10">
             {rows.map((r) => (
               <tr key={r.id} className="bg-slate-950/40 align-middle">
-                {/* Matricula (não editável) */}
-                <td className="py-2 px-3 font-mono whitespace-nowrap">{r.matricula}</td>
+                {/* Matricula (centralizada e sticky) */}
+                <td className="sticky left-0 z-10 bg-slate-950/80 backdrop-blur px-3 py-2 font-mono whitespace-nowrap border-r border-white/10 text-center">
+                  {r.matricula}
+                </td>
 
-                {/* Bairro (editável por duplo clique) */}
-                <td
-                  className="py-2 px-3"
-                  onDoubleClick={() => startEdit(r, "bairro")}
-                >
+                {/* Bairro (editável) */}
+                <td className="py-2 px-3" onDoubleClick={() => startEdit(r, "bairro")}>
                   {editing && editing.id === r.id && editing.field === "bairro" ? (
                     <input
                       autoFocus
@@ -543,15 +628,12 @@ export default function PendingReconnectionsTable() {
                       className="w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
                     />
                   ) : (
-                    <div className="truncate max-w-[160px]" title={r.bairro}>{r.bairro}</div>
+                    <div className="truncate max-w-[160px]" title={withFallback(r.bairro, "bairro")}>{withFallback(r.bairro, "bairro")}</div>
                   )}
                 </td>
 
-                {/* Rua e nº (editável: dois inputs lado a lado) */}
-                <td
-                  className="py-2 px-3"
-                  onDoubleClick={() => startEdit(r, "rua_numero")}
-                >
+                {/* Rua e nº (editável) */}
+                <td className="py-2 px-3" onDoubleClick={() => startEdit(r, "rua_numero")}>
                   {editing && editing.id === r.id && editing.field === "rua_numero" ? (
                     <div className="flex gap-2">
                       <input
@@ -577,15 +659,14 @@ export default function PendingReconnectionsTable() {
                       />
                     </div>
                   ) : (
-                    <div className="truncate max-w-[280px]" title={`${r.rua}, ${r.numero}`}>{r.rua}, {r.numero}</div>
+                    <div className="truncate max-w-[280px]" title={`${withFallback(r.rua, "rua")}, ${withFallback(r.numero, "numero")}`}>
+                      {withFallback(r.rua, "rua")}, {withFallback(r.numero, "numero")}
+                    </div>
                   )}
                 </td>
 
                 {/* Ponto ref. (editável) */}
-                <td
-                  className="py-2 px-3"
-                  onDoubleClick={() => startEdit(r, "ponto_referencia")}
-                >
+                <td className="py-2 px-3" onDoubleClick={() => startEdit(r, "ponto_referencia")}>
                   {editing && editing.id === r.id && editing.field === "ponto_referencia" ? (
                     <input
                       autoFocus
@@ -596,15 +677,14 @@ export default function PendingReconnectionsTable() {
                       className="w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
                     />
                   ) : (
-                    <div className="truncate max-w-[260px]" title={r.ponto_referencia || "-"}>{r.ponto_referencia || "-"}</div>
+                    <div className="truncate max-w-[260px]" title={withFallback(r.ponto_referencia, "ponto_referencia")}>
+                      {withFallback(r.ponto_referencia, "ponto_referencia")}
+                    </div>
                   )}
                 </td>
 
                 {/* Telefone (editável) */}
-                <td
-                  className="py-2 px-3 whitespace-nowrap"
-                  onDoubleClick={() => startEdit(r, "telefone")}
-                >
+                <td className="py-2 px-3 whitespace-nowrap" onDoubleClick={() => startEdit(r, "telefone")}>
                   {editing && editing.id === r.id && editing.field === "telefone" ? (
                     <input
                       autoFocus
@@ -618,6 +698,18 @@ export default function PendingReconnectionsTable() {
                   ) : (
                     fmtTel(r.telefone)
                   )}
+                </td>
+
+                {/* Solicitante (não editável) */}
+                <td className="py-2 px-3">
+                  <div className="max-w-[240px]">
+                    <div className="truncate font-medium" title={withFallback(r.solicitante_nome, "solicitante")}>
+                      {withFallback(r.solicitante_nome, "solicitante")}
+                    </div>
+                    <div className="truncate text-xs text-slate-400" title={withFallback(r.solicitante_documento, "documento")}>
+                      {withFallback(r.solicitante_documento, "documento")}
+                    </div>
+                  </div>
                 </td>
 
                 {/* Prioridade (duplo clique abre senha e alterna) */}
@@ -641,17 +733,13 @@ export default function PendingReconnectionsTable() {
                       <button
                         onClick={() => onClickAtivar(r)}
                         className="px-3 py-1.5 text-xs rounded-lg bg-emerald-600/20 text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-600/30 whitespace-nowrap"
-                        title="Marcar como ATIVA"
                       >
                         Ativar
                       </button>
                     ) : (
                       <button
                         type="button"
-                        onClick={() => {
-                          setPermText("Apenas TERCEIRIZADA e ADM podem ativar papeletas.");
-                          setPermModalOpen(true);
-                        }}
+                        onClick={() => { setPermText("Apenas TERCEIRIZADA e ADM podem ativar papeletas."); setPermModalOpen(true); }}
                         className="px-3 py-1.5 text-xs rounded-lg bg-emerald-600/10 text-emerald-300 ring-1 ring-emerald-400/20 cursor-not-allowed opacity-75 whitespace-nowrap"
                         title="Sem permissão"
                       >
@@ -661,13 +749,24 @@ export default function PendingReconnectionsTable() {
                   </div>
                 </td>
 
-                {/* PDF */}
-                <td className="py-2 px-3 text-center">{renderImprimirCell(r)}</td>
+                {/* PDF -> Imprimir (carimbar + abrir aba) */}
+                <td className="py-2 px-3 text-center">
+                  {r.pdf_ordem_path ? (
+                    <button
+                      onClick={() => openPrintWindow(r)}
+                      className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30 whitespace-nowrap"
+                    >
+                      Imprimir
+                    </button>
+                  ) : (
+                    <span className="text-slate-400 text-xs">{getEmptyLabel("pdf")}</span>
+                  )}
+                </td>
 
                 {/* Criado em */}
                 <td className="py-2 px-3 text-center whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
 
-                {/* Hidrômetro? */}
+                {/* Hidrômetro? — no final */}
                 <td className="py-2 px-3 text-center">
                   <HidrometroBadge value={r.precisa_troca_hidrometro} />
                 </td>
@@ -676,8 +775,8 @@ export default function PendingReconnectionsTable() {
 
             {rows.length === 0 && (
               <tr>
-                <td colSpan={10} className="py-6 text-center text-slate-400">
-                  Nenhuma papeleta pendente.
+                <td colSpan={11} className="py-6 text-center text-slate-400">
+                  {getEmptyLabel("lista_vazia")}
                 </td>
               </tr>
             )}
@@ -712,7 +811,7 @@ export default function PendingReconnectionsTable() {
             </h3>
             <div className="text-slate-300 text-sm mb-3">
               <div className="font-semibold mb-1">OBSERVAÇÃO:</div>
-              <div className="whitespace-pre-wrap">{modalAtivarSim.observacao ? modalAtivarSim.observacao : "—"}</div>
+              <div className="whitespace-pre-wrap">{withFallback(modalAtivarSim.observacao, "observacao")}</div>
             </div>
 
             <label className="block text-sm text-slate-300 mb-1">NOVO NÚMERO DO HIDRÔMETRO</label>
@@ -755,7 +854,7 @@ export default function PendingReconnectionsTable() {
             <p className="text-slate-300 text-sm">Não é necessário informar novo hidrômetro para esta ordem.</p>
             <div className="text-slate-300 text-sm mt-3">
               <div className="font-semibold mb-1">OBSERVAÇÃO:</div>
-              <div className="whitespace-pre-wrap">{modalAtivarNao.observacao ? modalAtivarNao.observacao : "—"}</div>
+              <div className="whitespace-pre-wrap">{withFallback(modalAtivarNao.observacao, "observacao")}</div>
             </div>
 
             <div className="mt-5 flex justify-end gap-3">
