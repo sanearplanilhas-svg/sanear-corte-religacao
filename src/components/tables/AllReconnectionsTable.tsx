@@ -377,7 +377,7 @@ export default function AllReconnectionsTable() {
         obsLines = obsLines.slice(0, Math.max(0, maxObsLines));
         if (obsLines.length > 0) {
           const lastIdx = obsLines.length - 1;
-         obsLines[lastIdx] = obsLines[lastIdx]!.replace(/.*$/, "") + " …";
+          obsLines[lastIdx] = obsLines[lastIdx]!.replace(/.*$/, "") + " …";
         }
       }
       boxH =
@@ -776,6 +776,32 @@ export default function AllReconnectionsTable() {
       </div>
 
       {/* ==== Modais ==== */}
+
+      {/* Confirmação de exclusão (recolocado) */}
+      {confirmDeleteOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-sm text-center">
+            <h3 className="text-lg font-semibold text-white mb-2">Excluir papeletas selecionadas?</h3>
+            <p className="text-slate-300 text-sm">
+              Você está prestes a excluir <strong>{selectedIds.size}</strong> item(ns). Essa ação não pode ser desfeita.
+            </p>
+            <div className="mt-5 flex justify-center gap-3">
+              <button
+                onClick={() => setConfirmDeleteOpen(false)}
+                className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleBulkDeletePerform}
+                className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white"
+              >
+                Excluir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Impressão bloqueada */}
       {modalBloqueio.open && (
