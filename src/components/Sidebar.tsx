@@ -15,6 +15,7 @@ import {
   LogOut,
   History,
   ChevronDown,
+  Upload, // 👈 novo ícone para Importar OS de Corte (PDF)
 } from "lucide-react";
 
 type Props = {
@@ -168,6 +169,15 @@ export default function Sidebar({ active, onSelect, onAfterSelect }: Props) {
             onSelect={onSelect}
             onAfterSelect={onAfterSelect}
           />
+          {/* NOVO: Importar OS de corte (PDF em lote) */}
+          <Item
+            icon={Upload}
+            label="Importar OS de corte (PDF)"
+            k={"importarOSCorte" as NavKey} // ajuste o tipo em ../types/nav se necessário
+            active={active === ("importarOSCorte" as NavKey)}
+            onSelect={onSelect}
+            onAfterSelect={onAfterSelect}
+          />
         </AccordionSection>
 
         <AccordionSection title="Serviços pendentes" storageKey="pendentes" defaultOpen>
@@ -245,7 +255,7 @@ export default function Sidebar({ active, onSelect, onAfterSelect }: Props) {
           <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-rose-600/20">
             <LogOut size={18} />
           </span>
-        <span className="text-sm font-medium">Sair</span>
+          <span className="text-sm font-medium">Sair</span>
           <span className="ml-auto h-5 w-1 rounded-full bg-rose-400" />
         </button>
       </div>

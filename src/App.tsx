@@ -13,6 +13,9 @@ import PendingCutsTable from "./components/tables/PendingCutsTable";
 import PendingReconnectionsTable from "./components/tables/PendingReconnectionsTable";
 import OverlayPrint from "./pages/overlay-print";
 
+// NOVA tela: importação em lote de OS de Corte (PDF)
+import ImportarOSCorte from "./pages/ImportarOSCorte";
+
 export default function App() {
   const { user, loading } = useAuth();
 
@@ -40,6 +43,9 @@ export default function App() {
 
         {/* Tela de sobreposição de PDF */}
         <Route path="/overlay-print" element={<OverlayPrint />} />
+
+        {/* NOVA rota: Importar OS de Corte (PDF em lote) */}
+        <Route path="/importar-os-corte" element={<ImportarOSCorte />} />
 
         {/* Rota coringa: manda pro dashboard */}
         <Route path="*" element={<Dashboard />} />

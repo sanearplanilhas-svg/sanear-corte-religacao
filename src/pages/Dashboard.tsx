@@ -19,9 +19,16 @@ import UsersPage from "./UsersPage";
 import Historico from "./Historico";
 import ReportsPage from "./Relatorios";
 
+// NOVO: tela de importação de OS de corte (PDF em lote)
+import ImportarOSCorte from "./ImportarOSCorte";
+
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 
 type BairroRow = { id: number; bairro: string };
+
+// Se o seu tipo NavKey ainda não inclui "importarOSCorte",
+// esta constante garante tipagem local sem quebrar o build.
+const NAV_IMPORTAR_OS_CORTE = "importarOSCorte" as NavKey;
 
 export default function Dashboard() {
   const [active, setActive] = useState<NavKey>("dashboard");
@@ -34,7 +41,7 @@ export default function Dashboard() {
   // Filtro
   const [showFiltro, setShowFiltro] = useState(false);
   const [dateStart, setDateStart] = useState("");
-  const [dateEnd, setDateEnd] = useState("");
+  const [dateEnd, setDateEnd] = useState(""); // <- corrigido
   const [allDates, setAllDates] = useState(true);
 
   // Bairros
@@ -44,7 +51,7 @@ export default function Dashboard() {
   const [deleteMode, setDeleteMode] = useState(false);
   const [selecionados, setSelecionados] = useState<Set<number>>(new Set());
 
-  // 👇 NOVO: estado do menu mobile
+  // estado do menu mobile
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // ---------- helpers ----------
@@ -269,7 +276,7 @@ export default function Dashboard() {
             <Sidebar
               active={active}
               onSelect={(k: NavKey) => setActive(k)}
-              onAfterSelect={() => setSidebarOpen(false)} // fecha ao escolher
+              onAfterSelect={() => setSidebarOpen(false)}
             />
           </div>
         </>
@@ -478,6 +485,14 @@ export default function Dashboard() {
                 <>
                   <h1 className="text-2xl">Todas as papeletas</h1>
                   <AllReconnectionsTable />
+                </>
+              )}
+
+              {/* NOVO: Importar OS de corte (PDF em lote) */}
+              {active === NAV_IMPORTAR_OS_CORTE && (
+                <>
+                  <h1 className="text-2xl">Importar OS de corte (PDF)</h1>
+                  <ImportarOSCorte />
                 </>
               )}
 
