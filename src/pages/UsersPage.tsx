@@ -9,9 +9,16 @@ type SupabaseLike = {
     getUser: () => Promise<{ data: { user?: any } | null; error: any }>;
     signInWithPassword: (args: { email: string; password: string }) => Promise<{ data: any; error: any }>;
     updateUser: (args: { password?: string }) => Promise<{ data: any; error: any }>;
+    getSession?: () => Promise<{ data: { session?: any } | null; error: any }>;
   };
   from: (table: string) => any;
   rpc: (fn: string, args?: any) => Promise<{ data: any; error: any }>;
+  functions?: {
+    invoke: (
+      name: string,
+      opts?: { body?: any; headers?: Record<string, string> }
+    ) => Promise<{ data: any; error: any }>;
+  };
 };
 
 // Funciona se ../lib/supabase exportar default ou { supabase }
@@ -51,7 +58,6 @@ const PAPEIS: { value: Papel; label: string }[] = [
   { value: "VISITANTE",    label: "Visitante" },
 ];
 
-// ✅ Inclui Teleatendimento sem remover nada
 const SETORES_CANON: string[] = [
   "ADM",
   "Direção",
@@ -74,7 +80,7 @@ function normalizeSetorForDB(s: string) {
   if (t.startsWith("ADM")) return "ADM";
   if (t.startsWith("DIREC")) return "Direção";
   if (t.startsWith("FATUR")) return "Faturamento";
-  if (t.includes("TELE")) return "Teleatendimento"; // suporte à nova opção
+  if (t.includes("TELE")) return "Teleatendimento";
   if (t.includes("TECN")) return "Setor Técnico";
   if (t.startsWith("ATEND")) return "Atendimento";
   if (t.startsWith("PROTOC")) return "Protocolo";
@@ -91,6 +97,7 @@ const fmt = (iso?: string | null) => {
   const d = new Date(iso);
   return isNaN(d.getTime()) ? "—" : d.toLocaleString("pt-BR");
 };
+const isEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
 
 // Avatar com iniciais
 function colorFromString(s: string) {
@@ -102,22 +109,12 @@ function colorFromString(s: string) {
 function initialsFromName(nameOrEmail: string) {
   const base = `${nameOrEmail ?? ""}`.trim();
   if (!base) return "?";
-
-  // Evita .includes() para compatibilidade com libs mais antigas
   const atIndex = base.indexOf("@");
   const left = atIndex >= 0 ? base.slice(0, atIndex) : base;
-
-  // Normaliza separadores e espaços
   const parts = left.replace(/[._-]+/g, " ").trim().split(/\s+/);
-
-  const letters = parts
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p.charAt(0).toUpperCase());
-
+  const letters = parts.filter(Boolean).slice(0, 2).map((p) => p.charAt(0).toUpperCase());
   return letters.join("") || base.charAt(0).toUpperCase() || "?";
 }
-
 const Avatar: React.FC<{ text: string; size?: number; className?: string }> = ({ text, size = 40, className }) => {
   const initials = initialsFromName(text);
   const bg = colorFromString(text);
@@ -149,7 +146,7 @@ export default function UsersPage() {
   const [createdAt, setCreatedAt] = useState<string | null>(null);
   const [lastSignInAt, setLastSignInAt] = useState<string | null>(null);
 
-  // selo visual (não persiste) quando setor = Atendimento (mantido, mas sem toggle na UI)
+  // selo visual (não persiste) quando setor = Atendimento
   const [isTeleAtendimento, setIsTeleAtendimento] = useState<boolean>(false);
 
   const [loading, setLoading] = useState<boolean>(true);
@@ -170,6 +167,9 @@ export default function UsersPage() {
   const [selfNewPwd2, setSelfNewPwd2] = useState("");
   const [selfPwdErr, setSelfPwdErr] = useState<string | null>(null);
   const [selfPwdSaving, setSelfPwdSaving] = useState(false);
+  const [showCur, setShowCur] = useState(false);
+  const [showNew1, setShowNew1] = useState(false);
+  const [showNew2, setShowNew2] = useState(false);
 
   // lista de usuários (ADM)
   const [users, setUsers] = useState<AppUserRow[]>([]);
@@ -183,10 +183,27 @@ export default function UsersPage() {
 
   const [newPwd, setNewPwd] = useState("");
   const [newPwd2, setNewPwd2] = useState("");
+  const [showAdmPwd1, setShowAdmPwd1] = useState(false);
+  const [showAdmPwd2, setShowAdmPwd2] = useState(false);
   const [adminPasscode, setAdminPasscode] = useState("");
   const [changingPwd, setChangingPwd] = useState(false);
   const [modalMsg, setModalMsg] = useState<string | null>(null);
   const [modalErr, setModalErr] = useState<string | null>(null);
+
+  // modal ADM (criar novo usuário)
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [cuEmail, setCuEmail] = useState("");
+  const [cuNome, setCuNome] = useState("");
+  const [cuSetor, setCuSetor] = useState("ADM");
+  const [cuTelefone, setCuTelefone] = useState("");
+  const [cuPapel, setCuPapel] = useState<Papel>("VISITANTE");
+  const [cuPwd1, setCuPwd1] = useState("");
+  const [cuPwd2, setCuPwd2] = useState("");
+  const [cuShow1, setCuShow1] = useState(false);
+  const [cuShow2, setCuShow2] = useState(false);
+  const [cuSaving, setCuSaving] = useState(false);
+  const [cuErr, setCuErr] = useState<string | null>(null);
+  const [cuMsg, setCuMsg] = useState<string | null>(null);
 
   // --- Debounce da busca
   useEffect(() => {
@@ -213,7 +230,6 @@ export default function UsersPage() {
       const res = await supabase.auth.getUser();
       if (res.error) throw res.error;
 
-      // ✅ Narrowing seguro para evitar TS2532
       const user = (res.data && "user" in res.data ? res.data.user : undefined) as any | undefined;
       if (!user) throw new Error("Sessão inválida. Faça login novamente.");
 
@@ -344,7 +360,6 @@ export default function UsersPage() {
         });
         setCreatedAt(data.created_at || null);
       }
-      // reset do selo visual
       setIsTeleAtendimento(false);
     } catch {
       // silencioso
@@ -511,6 +526,7 @@ export default function UsersPage() {
     }
   }
 
+  // ✅ Agora usando Supabase Functions (envia o Bearer automaticamente)
   async function changePasswordForUser() {
     if (!editUser) return;
     setModalErr(null);
@@ -522,20 +538,11 @@ export default function UsersPage() {
 
     setChangingPwd(true);
     try {
-      const res = await fetch("/api/admin-change-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: editUser.id, new_password: newPwd, passcode: adminPasscode }),
-      });
+      const { error: fnErr } = await (supabase as any).functions.invoke?.("admin-reset-password", {
+        body: { user_id: editUser.id, new_password: newPwd },
+      }) ?? { error: { message: "Supabase Functions não disponível." } };
 
-      let payload: any = null;
-      try {
-        const ct = res.headers.get("content-type") || "";
-        if (ct.includes("application/json")) payload = await res.json();
-        else payload = { ok: res.ok, text: await res.text() };
-      } catch { payload = { ok: res.ok }; }
-
-      if (!res.ok) throw new Error(payload?.error || "Falha na alteração da senha.");
+      if (fnErr) throw new Error(fnErr.message || "Falha na alteração da senha.");
 
       setModalMsg("Senha alterada com sucesso!");
       setNewPwd(""); setNewPwd2(""); setAdminPasscode("");
@@ -543,6 +550,57 @@ export default function UsersPage() {
       setModalErr(e.message || "Erro ao alterar senha.");
     } finally {
       setChangingPwd(false);
+    }
+  }
+
+  // -------------------------- Criar novo usuário (ADM) --------------------------
+  function openCreateModal() {
+    setCuEmail("");
+    setCuNome("");
+    setCuSetor("ADM");
+    setCuTelefone("");
+    setCuPapel("VISITANTE");
+    setCuPwd1("");
+    setCuPwd2("");
+    setCuShow1(false);
+    setCuShow2(false);
+    setCuErr(null);
+    setCuMsg(null);
+    setShowCreateModal(true);
+  }
+
+  async function handleCreateUser() {
+    setCuErr(null);
+    setCuMsg(null);
+
+    const email = cuEmail.trim().toLowerCase();
+    if (!isEmail(email)) { setCuErr("Informe um e-mail válido."); return; }
+    if (!cuPwd1 || cuPwd1.length < PWD_MIN) { setCuErr(`Senha deve ter pelo menos ${PWD_MIN} caracteres.`); return; }
+    if (cuPwd1 !== cuPwd2) { setCuErr("A confirmação de senha não confere."); return; }
+
+    setCuSaving(true);
+    try {
+      const { error: fnErr } = await (supabase as any).functions.invoke?.("admin-create-user", {
+        body: {
+          email,
+          password: cuPwd1,
+          nome: (cuNome || "").trim() || "Sem Nome",
+          setor: normalizeSetorForDB(cuSetor || "ADM"),
+          telefone: (cuTelefone || "").trim() || null,
+          papel: cuPapel,
+        },
+      }) ?? { error: { message: "Supabase Functions não disponível." } };
+
+      if (fnErr) throw new Error(fnErr.message || "Falha ao criar usuário.");
+
+      setCuMsg("Usuário criado com sucesso!");
+      await loadUsers();
+      // limpa campos para próxima criação
+      setCuEmail(""); setCuNome(""); setCuTelefone(""); setCuPapel("VISITANTE"); setCuPwd1(""); setCuPwd2("");
+    } catch (e: any) {
+      setCuErr(e.message || "Erro ao criar usuário.");
+    } finally {
+      setCuSaving(false);
     }
   }
 
@@ -589,7 +647,6 @@ export default function UsersPage() {
           <p className="text-xs text-slate-400">{subtituloInfo}</p>
         </div>
 
-        {/* badges */}
         {!isAdmin && (
           <span className="ml-auto text-xs px-2 py-1 rounded bg-slate-800 text-slate-300">
             Edição de papel restrita
@@ -601,7 +658,6 @@ export default function UsersPage() {
           </span>
         )}
 
-        {/* ações */}
         {!canEdit ? (
           <div className="flex gap-2">
             <button
@@ -710,7 +766,6 @@ export default function UsersPage() {
                 <label className="block text-xs text-slate-400 mb-1">
                   Setor de trabalho <span className="text-rose-400">*</span>
                 </label>
-                {/* badge visual (opcional; só aparece se marcado em algum momento) */}
                 {form.setor === "Atendimento" && isTeleAtendimento && (
                   <span className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-600/20 text-indigo-200 ring-1 ring-indigo-400/30">
                     Teleatendimento
@@ -733,8 +788,6 @@ export default function UsersPage() {
                     <option key={s} value={s}>{s}</option>
                   ))}
                 </select>
-
-                {/* ⛔ Removido o checkbox Teleatendimento ao lado do select, conforme pedido */}
               </div>
             </div>
 
@@ -774,17 +827,25 @@ export default function UsersPage() {
       {/* Lista ADM */}
       {isAdmin && (
         <div className="mt-10">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-3 gap-2">
             <h2 className="text-lg font-semibold text-slate-200">Usuários do sistema</h2>
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Filtro"
-              className="px-3 py-2 rounded-lg bg-slate-900 border border-white/10 text-sm text-slate-200 placeholder:text-slate-400"
-            />
+            <div className="flex items-center gap-2">
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Filtro"
+                className="px-3 py-2 rounded-lg bg-slate-900 border border-white/10 text-sm text-slate-200 placeholder:text-slate-400"
+              />
+              <button
+                onClick={openCreateModal}
+                className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white"
+                title="Criar novo usuário"
+              >
+                Novo usuário
+              </button>
+            </div>
           </div>
 
-          {/* 🚩 Ajuste de responsividade: overflow-x-auto no wrapper da tabela */}
           <div className="overflow-x-auto rounded-xl ring-1 ring-white/10">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-800/60 text-slate-300">
@@ -837,15 +898,17 @@ export default function UsersPage() {
             <div className="w-full max-w-sm rounded-xl bg-slate-900 border border-white/10 p-5">
               <h2 className="text-lg font-bold text-slate-100 mb-2">Desbloquear edição</h2>
               <p className="text-sm text-slate-400 mb-4">Informe a senha para liberar a edição deste perfil.</p>
-              <input
-                autoFocus
-                type="password"
-                value={pwd}
-                onChange={(e) => { setPwd(e.target.value); setPwdErr(""); }}
-                onKeyDown={(e) => e.key === "Enter" && checkPwdAndUnlock()}
-                placeholder="Senha"
-                className="w-full p-2 rounded bg-slate-800 text-white mb-2"
-              />
+              <div className="flex gap-2">
+                <input
+                  autoFocus
+                  type="password"
+                  value={pwd}
+                  onChange={(e) => { setPwd(e.target.value); setPwdErr(""); }}
+                  onKeyDown={(e) => e.key === "Enter" && checkPwdAndUnlock()}
+                  placeholder="Senha"
+                  className="w-full p-2 rounded bg-slate-800 text-white mb-2 border border-white/10"
+                />
+              </div>
               {pwdErr && <div className="text-rose-400 text-sm mb-2">{pwdErr}</div>}
               <div className="flex justify-end gap-2">
                 <button
@@ -876,30 +939,54 @@ export default function UsersPage() {
               <p className="text-sm text-slate-400 mb-4">Confirme sua senha atual e defina uma nova.</p>
 
               <label className="block text-xs text-slate-400 mb-1">Senha atual</label>
-              <input
-                type="password"
-                value={selfCurPwd}
-                onChange={(e) => setSelfCurPwd(e.target.value)}
-                className="w-full p-2 rounded bg-slate-800 text-white mb-3 border border-white/10"
-                autoFocus
-              />
+              <div className="flex gap-2 mb-3">
+                <input
+                  type={showCur ? "text" : "password"}
+                  value={selfCurPwd}
+                  onChange={(e) => setSelfCurPwd(e.target.value)}
+                  className="w-full p-2 rounded bg-slate-800 text-white border border-white/10"
+                  autoFocus
+                />
+                <button
+                  onClick={() => setShowCur((v) => !v)}
+                  className="px-3 rounded bg-slate-700 hover:bg-slate-600 text-white text-xs"
+                >
+                  {showCur ? "Ocultar" : "Mostrar"}
+                </button>
+              </div>
 
               <label className="block text-xs text-slate-400 mb-1">Nova senha</label>
-              <input
-                type="password"
-                value={selfNewPwd}
-                onChange={(e) => setSelfNewPwd(e.target.value)}
-                className="w-full p-2 rounded bg-slate-800 text-white mb-3 border border-white/10"
-                placeholder={`Mínimo ${PWD_MIN} caracteres`}
-              />
+              <div className="flex gap-2 mb-3">
+                <input
+                  type={showNew1 ? "text" : "password"}
+                  value={selfNewPwd}
+                  onChange={(e) => setSelfNewPwd(e.target.value)}
+                  className="w-full p-2 rounded bg-slate-800 text-white border border-white/10"
+                  placeholder={`Mínimo ${PWD_MIN} caracteres`}
+                />
+                <button
+                  onClick={() => setShowNew1((v) => !v)}
+                  className="px-3 rounded bg-slate-700 hover:bg-slate-600 text-white text-xs"
+                >
+                  {showNew1 ? "Ocultar" : "Mostrar"}
+                </button>
+              </div>
 
               <label className="block text-xs text-slate-400 mb-1">Confirmar nova senha</label>
-              <input
-                type="password"
-                value={selfNewPwd2}
-                onChange={(e) => setSelfNewPwd2(e.target.value)}
-                className="w-full p-2 rounded bg-slate-800 text-white mb-3 border border-white/10"
-              />
+              <div className="flex gap-2 mb-3">
+                <input
+                  type={showNew2 ? "text" : "password"}
+                  value={selfNewPwd2}
+                  onChange={(e) => setSelfNewPwd2(e.target.value)}
+                  className="w-full p-2 rounded bg-slate-800 text-white border border-white/10"
+                />
+                <button
+                  onClick={() => setShowNew2((v) => !v)}
+                  className="px-3 rounded bg-slate-700 hover:bg-slate-600 text-white text-xs"
+                >
+                  {showNew2 ? "Ocultar" : "Mostrar"}
+                </button>
+              </div>
 
               {selfPwdErr && (
                 <div className="mb-3 rounded bg-rose-600/15 text-rose-200 ring-1 ring-rose-400/30 px-3 py-2">
@@ -928,7 +1015,7 @@ export default function UsersPage() {
         </div>
       )}
 
-      {/* Modal ADM: editar usuário + (alterar senha só se isAdmin) */}
+      {/* Modal ADM: editar usuário + alterar senha */}
       {showEditModal && editUser && (
         <div className="fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
@@ -1041,20 +1128,36 @@ export default function UsersPage() {
                   <hr className="my-5 border-white/10" />
                   <h4 className="text-sm font-semibold text-slate-300 mb-3">Alterar senha do usuário</h4>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <input
-                      type="password"
-                      placeholder="Nova senha"
-                      value={newPwd}
-                      onChange={(e) => setNewPwd(e.target.value)}
-                      className="w-full p-2 rounded-lg bg-slate-800 text-slate-200 border border-white/10"
-                    />
-                    <input
-                      type="password"
-                      placeholder="Confirmar senha"
-                      value={newPwd2}
-                      onChange={(e) => setNewPwd2(e.target.value)}
-                      className="w-full p-2 rounded-lg bg-slate-800 text-slate-200 border border-white/10"
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        type={showAdmPwd1 ? "text" : "password"}
+                        placeholder="Nova senha"
+                        value={newPwd}
+                        onChange={(e) => setNewPwd(e.target.value)}
+                        className="w-full p-2 rounded-lg bg-slate-800 text-slate-200 border border-white/10"
+                      />
+                      <button
+                        onClick={() => setShowAdmPwd1(v => !v)}
+                        className="px-3 rounded bg-slate-700 hover:bg-slate-600 text-white text-xs"
+                      >
+                        {showAdmPwd1 ? "Ocultar" : "Mostrar"}
+                      </button>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type={showAdmPwd2 ? "text" : "password"}
+                        placeholder="Confirmar senha"
+                        value={newPwd2}
+                        onChange={(e) => setNewPwd2(e.target.value)}
+                        className="w-full p-2 rounded-lg bg-slate-800 text-slate-200 border border-white/10"
+                      />
+                      <button
+                        onClick={() => setShowAdmPwd2(v => !v)}
+                        className="px-3 rounded bg-slate-700 hover:bg-slate-600 text-white text-xs"
+                      >
+                        {showAdmPwd2 ? "Ocultar" : "Mostrar"}
+                      </button>
+                    </div>
                     <input
                       type="password"
                       placeholder="Senha-mestre"
@@ -1074,6 +1177,143 @@ export default function UsersPage() {
                   </div>
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal ADM: criar novo usuário */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+          <div className="relative z-10 min-h-screen flex items-center justify-center p-4">
+            <div className="w-full max-w-2xl rounded-xl bg-slate-900 border border-white/10 p-5">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-3">
+                  <Avatar text={cuEmail || cuNome || "Novo Usuário"} size={40} />
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-100">Criar novo usuário</h3>
+                    <p className="text-xs text-slate-400">Preencha os dados abaixo.</p>
+                  </div>
+                </div>
+                <button
+                  className="px-3 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-100"
+                  onClick={() => setShowCreateModal(false)}
+                >
+                  Fechar
+                </button>
+              </div>
+
+              {cuErr && <div className="mb-3 rounded bg-rose-600/15 text-rose-200 ring-1 ring-rose-400/30 px-3 py-2">{cuErr}</div>}
+              {cuMsg && <div className="mb-3 rounded bg-emerald-600/15 text-emerald-200 ring-1 ring-emerald-400/30 px-3 py-2">{cuMsg}</div>}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">E-mail</label>
+                  <input
+                    type="email"
+                    value={cuEmail}
+                    onChange={(e) => setCuEmail(e.target.value)}
+                    className="w-full p-2 rounded-lg bg-slate-800 text-slate-200 border border-white/10"
+                    placeholder="email@exemplo.com"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Nome completo</label>
+                  <input
+                    type="text"
+                    value={cuNome}
+                    onChange={(e) => setCuNome(e.target.value)}
+                    className="w-full p-2 rounded-lg bg-slate-800 text-slate-200 border border-white/10"
+                    placeholder="Ex.: João da Silva"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Setor</label>
+                  <select
+                    value={cuSetor}
+                    onChange={(e) => setCuSetor(e.target.value)}
+                    className="w-full p-2 rounded-lg bg-slate-800 text-slate-200 border border-white/10"
+                  >
+                    {SETORES_CANON.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Telefone</label>
+                  <input
+                    type="tel"
+                    value={cuTelefone}
+                    onChange={(e) => setCuTelefone(e.target.value)}
+                    className="w-full p-2 rounded-lg bg-slate-800 text-slate-200 border border-white/10"
+                    placeholder="DDD + número"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Grau de acesso</label>
+                  <select
+                    value={cuPapel}
+                    onChange={(e) => setCuPapel(normalizePapel(e.target.value))}
+                    className="w-full p-2 rounded-lg bg-slate-800 text-slate-200 border border-white/10"
+                  >
+                    {PAPEIS.map((p) => (
+                      <option key={p.value} value={p.value}>{p.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Senha</label>
+                    <div className="flex gap-2">
+                      <input
+                        type={cuShow1 ? "text" : "password"}
+                        value={cuPwd1}
+                        onChange={(e) => setCuPwd1(e.target.value)}
+                        className="w-full p-2 rounded-lg bg-slate-800 text-slate-200 border border-white/10"
+                        placeholder={`Mínimo ${PWD_MIN} caracteres`}
+                      />
+                      <button
+                        onClick={() => setCuShow1(v => !v)}
+                        className="px-3 rounded bg-slate-700 hover:bg-slate-600 text-white text-xs"
+                      >
+                        {cuShow1 ? "Ocultar" : "Mostrar"}
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Confirmar senha</label>
+                    <div className="flex gap-2">
+                      <input
+                        type={cuShow2 ? "text" : "password"}
+                        value={cuPwd2}
+                        onChange={(e) => setCuPwd2(e.target.value)}
+                        className="w-full p-2 rounded-lg bg-slate-800 text-slate-200 border border-white/10"
+                      />
+                      <button
+                        onClick={() => setCuShow2(v => !v)}
+                        className="px-3 rounded bg-slate-700 hover:bg-slate-600 text-white text-xs"
+                      >
+                        {cuShow2 ? "Ocultar" : "Mostrar"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-2 mt-5">
+                <button
+                  onClick={handleCreateUser}
+                  disabled={cuSaving}
+                  className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-60"
+                >
+                  {cuSaving ? "Criando…" : "Criar usuário"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
