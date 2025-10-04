@@ -4,20 +4,10 @@ import supabase from "../../lib/supabase";
 type Msg = { kind: "ok" | "err"; text: string } | null;
 
 type ObsOpt = "SEM HIDROMETRO NO LOCAL" | "HIDROMETRO VAZANDO" | "OUTROS" | "";
-type SubTab = "PAPELETA" | "LIBERACAO";
 type DocTipo = "CPF" | "OUTROS";
-
-type Pendente = {
-  id: string;
-  matricula: string;
-  bairro: string | null;
-  rua: string | null;
-  created_at: string;
-};
 
 // ======= ROLES (permissões) =======
 const ALLOWED_CREATE = new Set(["ADM", "DIRETOR", "COORDENADOR", "OPERADOR"]);
-const ALLOWED_LIBERACAO = new Set(["ADM", "DIRETOR", "COORDENADOR"]);
 // ==================================
 
 // Helpers tolerantes
@@ -37,9 +27,6 @@ const MSG_NAO_INF = "NÃO INFORMADO PELO REQUERENTE";
 const MSG_OUTROS_DOC = "OUTROS DOCUMENTO";
 
 export default function ReconnectionOrderForm() {
-  // abas
-  const [subTab, setSubTab] = React.useState<SubTab>("PAPELETA");
-
   // flags
   const [telefoneNaoInformado, setTelefoneNaoInformado] = React.useState(false);
   const [pontoRefNaoInformado, setPontoRefNaoInformado] = React.useState(false);
@@ -100,27 +87,16 @@ export default function ReconnectionOrderForm() {
     return parts.length ? parts.join(" | ") : null;
   };
 
-  // lista liberação
-  const [carregandoLista, setCarregandoLista] = React.useState(false);
-  const [pendentes, setPendentes] = React.useState<Pendente[]>([]);
-
+  // relógio
   React.useEffect(() => {
     if (saving) return;
     const id = setInterval(() => setNow(new Date().toLocaleString("pt-BR")), 1000);
     return () => clearInterval(id);
   }, [saving]);
 
-  React.useEffect(() => {
-    if (subTab === "LIBERACAO") {
-      loadPendentes();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subTab]);
-
-  // ======= papel do usuário e permissões =======
+  // ======= papel do usuário e permissões (apenas criação) =======
   const [userRole, setUserRole] = React.useState<string>("VISITANTE");
   const canCreate = React.useMemo(() => ALLOWED_CREATE.has((userRole || "VISITANTE").toUpperCase()), [userRole]);
-  const canLiberacao = React.useMemo(() => ALLOWED_LIBERACAO.has((userRole || "VISITANTE").toUpperCase()), [userRole]);
 
   const [permModalOpen, setPermModalOpen] = React.useState(false);
   const [permText, setPermText] = React.useState("Seu perfil não tem permissão para executar esta ação.");
@@ -143,42 +119,6 @@ export default function ReconnectionOrderForm() {
       }
     })();
   }, []);
-
-  // bloqueia acesso direto à aba Liberação
-  React.useEffect(() => {
-    if (subTab === "LIBERACAO" && !canLiberacao) {
-      setPermText("Acesso restrito: apenas ADM, DIRETOR e COORDENADOR podem acessar a Liberação de Papeleta.");
-      setPermModalOpen(true);
-      setSubTab("PAPELETA");
-    }
-  }, [subTab, canLiberacao]);
-
-  async function loadPendentes() {
-    try {
-      setCarregandoLista(true);
-      const { data, error } = await supabase
-        .from("ordens_religacao")
-        .select("id, matricula, bairro, rua, created_at")
-        .eq("status", "liberacao_pendente")
-        .order("created_at", { ascending: true });
-
-      if (error) throw error;
-
-      const rows: Pendente[] = (data ?? []).map((r: any) => ({
-        id: r.id,
-        matricula: r.matricula,
-        bairro: r.bairro ?? "",
-        rua: r.rua ?? "",
-        created_at: r.created_at,
-      }));
-      setPendentes(rows);
-    } catch (e) {
-      setMsg({ kind: "err", text: errText(e, "Falha ao carregar pendentes.") });
-      setTimeout(() => setMsg(null), 2500);
-    } finally {
-      setCarregandoLista(false);
-    }
-  }
 
   function clear() {
     setMatricula("");
@@ -336,8 +276,7 @@ export default function ReconnectionOrderForm() {
     } else {
       if (pontoRef.trim() === MSG_NAO_INF) setPontoRef("");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pontoRefNaoInformado]);
+  }, [pontoRefNaoInformado, pontoRef]);
 
   // titular da conta: preencher o campo nome quando marcado; restaurar quando desmarcar
   React.useEffect(() => {
@@ -349,8 +288,7 @@ export default function ReconnectionOrderForm() {
         setSolicitanteNome(prevNomeRef.current || "");
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [titularConta]);
+  }, [titularConta, solicitanteNome]);
 
   function validatePapeleta(): string | null {
     // obrigatórios
@@ -547,492 +485,346 @@ export default function ReconnectionOrderForm() {
     setSenhaErro(null);
   }
 
-  // liberação por linha
-  async function liberar(id: string, precisaTroca: boolean) {
-    try {
-      const { error: upErr } = await supabase
-        .from("ordens_religacao")
-        .update({
-          precisa_troca_hidrometro: precisaTroca,
-          status: "aguardando_religacao",
-        })
-        .eq("id", id);
-
-      if (upErr) throw upErr;
-
-      setPendentes((prev) => prev.filter((p) => p.id !== id));
-      setMsg({ kind: "ok", text: `Liberação confirmada (${precisaTroca ? "SIM" : "NÃO"}).` });
-      setTimeout(() => setMsg(null), 1500);
-    } catch (e) {
-      setMsg({ kind: "err", text: errText(e, "Falha ao liberar.") });
-      setTimeout(() => setMsg(null), 2000);
-    }
-  }
-
-  const fmt = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR") : "—");
-
   return (
     <div className="rounded-2xl bg-slate-900/50 ring-1 ring-white/10 p-6 relative">
       {/* Cabeçalho */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold">Religação</h2>
-          <p className="text-slate-400 text-sm">Gerencie a emissão e liberação de papeletas.</p>
+          <p className="text-slate-400 text-sm">Emissão de papeleta de religação.</p>
         </div>
         <div className="text-xs text-emerald-300 font-semibold">{now}</div>
       </div>
 
-      {/* Abas */}
-      <div className="mt-5 flex gap-2">
-        <button
-          onClick={() => setSubTab("PAPELETA")}
-          className={`px-3 py-2 rounded-lg text-sm transition border ${
-            subTab === "PAPELETA"
-              ? "bg-emerald-500/20 text-emerald-200 border-emerald-400/40"
-              : "bg-white/5 text-slate-300 border-white/10 hover:bg-white/10"
-          }`}
-        >
-          Nova Papeleta
-        </button>
-        <button
-          onClick={() => {
-            if (!canLiberacao) {
-              setPermText("Acesso restrito: apenas ADM, DIRETOR e COORDENADOR podem acessar a Liberação de Papeleta.");
-              setPermModalOpen(true);
-              return;
-            }
-            setSubTab("LIBERACAO");
-          }}
-          className={`px-3 py-2 rounded-lg text-sm transition border ${
-            subTab === "LIBERACAO"
-              ? "bg-indigo-500/20 text-indigo-200 border-indigo-400/40"
-              : "bg-white/5 text-slate-300 border-white/10 hover:bg-white/10"
-          }`}
-        >
-          Liberação de Papeleta
-        </button>
-      </div>
+      {/* Formulário Único (sem aba de liberação) */}
+      <form onSubmit={onSave} className="mt-6">
+        <div className="space-y-8 divide-y divide-white/10">
+          {/* Seção 1: Identificação */}
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-slate-300">Identificação</h3>
+            </div>
 
-      {subTab === "PAPELETA" ? (
-        <form onSubmit={onSave} className="mt-6">
-          <div className="space-y-8 divide-y divide-white/10">
-            {/* Seção 1: Identificação */}
-            <section className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-slate-300">Identificação</h3>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Coluna esquerda: matrícula + telefone */}
-                <div className="grid grid-cols-1 gap-4">
-                  {/* Matrícula */}
-                  <div>
-                    <label className="block text-sm text-slate-300 mb-1">Matrícula *</label>
-                    <input
-                      className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-                      placeholder="EX.: 00000"
-                      value={matricula}
-                      onChange={handleMatricula}
-                      onBlur={() => {
-                        const m = formatMatricula();
-                        if (m) fetchMatriculaData(m);
-                      }}
-                      inputMode="numeric"
-                      maxLength={5}
-                    />
-                  </div>
-
-                  {/* Telefone */}
-                  <div>
-                    <label className="block text-sm text-slate-300 mb-1">Telefone de contato *</label>
-                    <input
-                      className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 disabled:opacity-60"
-                      placeholder="+55 27 00000-0000"
-                      value={telefone}
-                      onChange={handleTelefoneChange}
-                      onBlur={handleTelefoneBlur}
-                      inputMode="tel"
-                      autoComplete="tel"
-                      disabled={telefoneNaoInformado}
-                    />
-                    {/* Checkbox abaixo do input */}
-                    <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-300">
-                      <label className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={telefoneNaoInformado}
-                          onChange={(e) => {
-                            const checked = e.target.checked;
-                            setTelefoneNaoInformado(checked);
-                            if (checked) setTelefone(MSG_NAO_INF);
-                            else if (telefone.trim() === MSG_NAO_INF) setTelefone("");
-                          }}
-                        />
-                        <span>Não informado pelo requerente</span>
-                      </label>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Coluna direita: Prioridade (senha 29101993) */}
-                <div className="rounded-xl bg-slate-950/60 border border-white/10 p-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-slate-300">Prioridade</span>
-                    <span
-                      className={`text-[11px] px-2 py-1 rounded ${
-                        prioridade ? "bg-fuchsia-600/30 text-fuchsia-200" : "bg-slate-700/40 text-slate-300"
-                      }`}
-                      title={prioridade ? "Prioridade liberada pelo diretor" : "Normal"}
-                    >
-                      {prioridade ? "Liberada" : "Normal"}
-                    </span>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={handleClickPrioridade}
-                    className="mt-2 w-full px-3 py-2 rounded-lg bg-fuchsia-600/20 text-fuchsia-200 hover:bg-fuchsia-600/30 transition"
-                  >
-                    {prioridade ? "Prioridade do Diretor Ativada" : "Solicitar Prioridade do Diretor"}
-                  </button>
-
-                  <p className="mt-2 text-[12px] leading-snug text-slate-400">
-                    Use somente em casos excepcionais, com autorização do Diretor.
-                  </p>
-                </div>
-              </div>
-            </section>
-
-            {/* Seção 1.1: Solicitante */}
-            <section className="pt-8 space-y-4">
-              <h3 className="text-sm font-semibold text-slate-300">Solicitante</h3>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Coluna esquerda: matrícula + telefone */}
+              <div className="grid grid-cols-1 gap-4">
+                {/* Matrícula */}
                 <div>
-                  <label className="block text-sm text-slate-300 mb-1">Nome do solicitante *</label>
+                  <label className="block text-sm text-slate-300 mb-1">Matrícula *</label>
                   <input
                     className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-                    placeholder="EX.: JOÃO DA SILVA"
-                    value={solicitanteNome}
-                    onChange={(e) => setSolicitanteNome(toUpper(e.target.value))}
-                    onPaste={(e: React.ClipboardEvent<HTMLInputElement>) => {
-                      e.preventDefault();
-                      setSolicitanteNome(toUpper(e.clipboardData?.getData("text")));
-                    }}
-                    autoCapitalize="characters"
-                    autoCorrect="off"
-                  />
-                  {/* Titular da conta */}
-                  <div className="mt-2">
-                    <label className="inline-flex items-center gap-2 text-sm text-slate-300">
-                      <input
-                        type="checkbox"
-                        checked={titularConta}
-                        onChange={(e) => setTitularConta(e.target.checked)}
-                      />
-                      <span>Solicitante é o <b>titular da conta</b></span>
-                    </label>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-slate-300 mb-1">Documento do solicitante *</label>
-                  <input
-                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40"
-                    placeholder={docTipo === "CPF" ? "000.000.000-00" : "EX.: RG / PASSAPORTE / ETC."}
-                    value={docTipo === "CPF" ? formatCPF(solicitanteDocumento) : toUpper(solicitanteDocumento)}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (docTipo === "CPF") {
-                        // mantém máscara enquanto digita
-                        setSolicitanteDocumento(formatCPF(v));
-                      } else {
-                        setSolicitanteDocumento(toUpper(v));
-                      }
-                    }}
+                    placeholder="EX.: 00000"
+                    value={matricula}
+                    onChange={handleMatricula}
                     onBlur={() => {
-                      if (docTipo === "CPF" && solicitanteDocumento.trim() && !isValidCPF(solicitanteDocumento)) {
-                        setCpfModalOpen(true);
-                      } else if (docTipo === "CPF") {
-                        // garante máscara final correta
-                        setSolicitanteDocumento(formatCPF(solicitanteDocumento));
-                      }
+                      const m = formatMatricula();
+                      if (m) fetchMatriculaData(m);
                     }}
-                    autoCapitalize="characters"
-                    autoCorrect="off"
-                  />
-                  {/* Rádios embaixo do input */}
-                  <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-300">
-                    <label className="inline-flex items-center gap-2">
-                      <input
-                        type="radio"
-                        checked={docTipo === "CPF"}
-                        onChange={() => handleDocTipoChange("CPF")}
-                      />
-                      <span>CPF (validação obrigatória)</span>
-                    </label>
-                    <label className="inline-flex items-center gap-2">
-                      <input
-                        type="radio"
-                        checked={docTipo === "OUTROS"}
-                        onChange={() => handleDocTipoChange("OUTROS")}
-                      />
-                      <span>OUTROS DOCUMENTO (sem restrição)</span>
-                    </label>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            {/* Seção 2: Endereço */}
-            <section className="pt-8 space-y-4">
-              <h3 className="text-sm font-semibold text-slate-300">Endereço</h3>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-slate-300 mb-1">Bairro *</label>
-                  <input
-                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-                    placeholder="EX.: CENTRO"
-                    value={bairro}
-                    onChange={(e) => setBairro(toUpper(e.target.value))}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-slate-300 mb-1">Rua *</label>
-                  <input
-                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-                    placeholder="EX.: AV. BRASIL"
-                    value={rua}
-                    onChange={(e) => setRua(toUpper(e.target.value))}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-slate-300 mb-1">Número *</label>
-                  <input
-                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-                    placeholder="EX.: 123"
-                    value={numero}
-                    onChange={(e) => setNumero(toUpper(e.target.value))}
+                    inputMode="numeric"
+                    maxLength={5}
                   />
                 </div>
 
-                {/* Ponto de referência */}
+                {/* Telefone */}
                 <div>
-                  <label className="block text-sm text-slate-300 mb-1">Ponto de referência *</label>
+                  <label className="block text-sm text-slate-300 mb-1">Telefone de contato *</label>
                   <input
-                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase disabled:opacity-60"
-                    placeholder="EX.: PRÓX. AO POSTO X"
-                    value={pontoRef}
-                    onChange={(e) => setPontoRef(toUpper(e.target.value))}
-                    disabled={pontoRefNaoInformado}
+                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 disabled:opacity-60"
+                    placeholder="+55 27 00000-0000"
+                    value={telefone}
+                    onChange={handleTelefoneChange}
+                    onBlur={handleTelefoneBlur}
+                    inputMode="tel"
+                    autoComplete="tel"
+                    disabled={telefoneNaoInformado}
                   />
+                  {/* Checkbox abaixo do input */}
                   <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-300">
                     <label className="inline-flex items-center gap-2">
                       <input
                         type="checkbox"
-                        checked={pontoRefNaoInformado}
-                        onChange={(e) => setPontoRefNaoInformado(e.target.checked)}
+                        checked={telefoneNaoInformado}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setTelefoneNaoInformado(checked);
+                          if (checked) setTelefone(MSG_NAO_INF);
+                          else if (telefone.trim() === MSG_NAO_INF) setTelefone("");
+                        }}
                       />
                       <span>Não informado pelo requerente</span>
                     </label>
                   </div>
                 </div>
               </div>
-            </section>
 
-            {/* Seção 3: Observações */}
-            <section className="pt-8 space-y-4">
-              <h3 className="text-sm font-semibold text-slate-300">Observações</h3>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-slate-300 mb-1">Seleção</label>
-                  <select
-                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-                    value={observacaoOpt}
-                    onChange={(e) => setObservacaoOpt((toUpper(e.target.value) as ObsOpt) || "")}
+              {/* Coluna direita: Prioridade (senha 29101993) */}
+              <div className="rounded-xl bg-slate-950/60 border border-white/10 p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-slate-300">Prioridade</span>
+                  <span
+                    className={`text-[11px] px-2 py-1 rounded ${
+                      prioridade ? "bg-fuchsia-600/30 text-fuchsia-200" : "bg-slate-700/40 text-slate-300"
+                    }`}
+                    title={prioridade ? "Prioridade liberada pelo diretor" : "Normal"}
                   >
-                    <option value="">SELECIONE...</option>
-                    <option value="SEM HIDROMETRO NO LOCAL">SEM HIDROMETRO NO LOCAL</option>
-                    <option value="HIDROMETRO VAZANDO">HIDROMETRO VAZANDO</option>
-                    <option value="OUTROS">OUTROS</option>
-                  </select>
-                </div>
-
-                {observacaoOpt === "OUTROS" && (
-                  <div>
-                    <label className="block text-sm text-slate-300 mb-1">Descreva (maiúsculo)</label>
-                    <input
-                      type="text"
-                      className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-                      placeholder="DIGITE AQUI..."
-                      value={observacaoOutros}
-                      onChange={(e) => setObservacaoOutros(toUpper(e.target.value))}
-                      onPaste={(e: React.ClipboardEvent<HTMLInputElement>) => {
-                        e.preventDefault();
-                        const text = e.clipboardData?.getData("text");
-                        setObservacaoOutros(toUpper(text));
-                      }}
-                      autoCapitalize="characters"
-                      autoCorrect="off"
-                    />
-                  </div>
-                )}
-              </div>
-            </section>
-
-            {/* Seção 4: Anexos */}
-            <section className="pt-8 space-y-4">
-              <h3 className="text-sm font-semibold text-slate-300">Anexos</h3>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-slate-300 mb-2">Anexar PDF da papeleta de Religação *</label>
-                  <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30 cursor-pointer">
-                    <input
-                      type="file"
-                      accept="application/pdf"
-                      className="hidden"
-                      onChange={(e) =>
-                        setPdfOrdem(e.currentTarget.files && e.currentTarget.files[0] ? e.currentTarget.files[0] : null)
-                      }
-                    />
-                    Selecionar PDF
-                  </label>
-                  <span className="ml-3 text-xs text-slate-400">
-                    {pdfOrdem ? pdfOrdem.name : "Nenhum arquivo selecionado"}
+                    {prioridade ? "Liberada" : "Normal"}
                   </span>
                 </div>
 
-                <div>
-                  <label className="block text-sm text-slate-300 mb-2">Anexar comprovante (opcional)</label>
-                  <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-500/20 text-purple-200 ring-1 ring-purple-400/40 hover:bg-purple-500/30 cursor-pointer">
-                    <input
-                      type="file"
-                      accept="application/pdf"
-                      className="hidden"
-                      onChange={(e) =>
-                        setPdfComprovante(
-                          e.currentTarget.files && e.currentTarget.files[0] ? e.currentTarget.files[0] : null
-                        )
-                      }
-                    />
-                    Selecionar PDF
-                  </label>
-                  <span className="ml-3 text-xs text-slate-400">
-                    {pdfComprovante ? pdfComprovante.name : "Nenhum arquivo selecionado"}
-                  </span>
-                </div>
-              </div>
-            </section>
-
-            {/* Ações */}
-            <section className="pt-8">
-              <div className="flex items-center gap-3">
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="px-4 py-2 rounded-lg bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-500/30 disabled:opacity-50"
-                >
-                  {saving ? "Salvando…" : "Salvar"}
-                </button>
                 <button
                   type="button"
-                  onClick={clear}
-                  className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10"
+                  onClick={handleClickPrioridade}
+                  className="mt-2 w-full px-3 py-2 rounded-lg bg-fuchsia-600/20 text-fuchsia-200 hover:bg-fuchsia-600/30 transition"
                 >
-                  Limpar
+                  {prioridade ? "Prioridade do Diretor Ativada" : "Solicitar Prioridade do Diretor"}
                 </button>
-              </div>
-            </section>
-          </div>
-        </form>
-      ) : (
-        // ===== LIBERAÇÃO — LISTA =====
-        <div className="mt-6 space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-base font-semibold text-white">Papeletas aguardando liberação</h3>
-            <button
-              type="button"
-              onClick={loadPendentes}
-              className="px-3 py-1.5 rounded-lg text-xs bg-white/5 border border-white/10 hover:bg-white/10"
-            >
-              Atualizar
-            </button>
-          </div>
 
-          <div className="rounded-xl ring-1 ring-white/10">
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="bg-white/5 text-slate-300">
-                  <tr>
-                    <th className="px-3 py-2 text-left">MATRÍCULA</th>
-                    <th className="px-3 py-2 text-left">BAIRRO</th>
-                    <th className="px-3 py-2 text-left">RUA</th>
-                    <th className="px-3 py-2 text-left">CRIADA EM</th>
-                    <th className="px-3 py-2 text-left">TROCAR HIDRÔMETRO?</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/10">
-                  {carregandoLista ? (
-                    <tr>
-                      <td colSpan={5} className="px-3 py-4 text-slate-400">Carregando…</td>
-                    </tr>
-                  ) : pendentes.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="px-3 py-4 text-slate-400">Nenhuma papeleta pendente.</td>
-                    </tr>
-                  ) : (
-                    pendentes.map((p) => (
-                      <tr key={p.id} className="bg-slate-950/40 align-middle">
-                        <td className="px-3 py-2 font-mono whitespace-nowrap">{p.matricula}</td>
-                        <td className="px-3 py-2">
-                          <div
-                            className="truncate max-w-[160px] md:max-w-none md:whitespace-normal md:break-words"
-                            title={toUpper(p.bairro ?? "")}
-                          >
-                            {toUpper(p.bairro ?? "")}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2">
-                          <div
-                            className="truncate max-w-[240px] md:max-w-none md:whitespace-normal md:break-words"
-                            title={toUpper(p.rua ?? "")}
-                          >
-                            {toUpper(p.rua ?? "")}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap">{fmt(p.created_at)}</td>
-                        <td className="px-3 py-2">
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => liberar(p.id, true)}
-                              className="px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs"
-                              title="Precisa trocar hidrômetro: SIM"
-                            >
-                              SIM
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => liberar(p.id, false)}
-                              className="px-3 py-1.5 rounded-md bg-rose-600 hover:bg-rose-500 text-white text-xs"
-                              title="Precisa trocar hidrômetro: NÃO"
-                            >
-                              NÃO
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                <p className="mt-2 text-[12px] leading-snug text-slate-400">
+                  Use somente em casos excepcionais, com autorização do Diretor.
+                </p>
+              </div>
             </div>
-          </div>
+          </section>
+
+          {/* Seção 1.1: Solicitante */}
+          <section className="pt-8 space-y-4">
+            <h3 className="text-sm font-semibold text-slate-300">Solicitante</h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Nome do solicitante *</label>
+                <input
+                  className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                  placeholder="EX.: JOÃO DA SILVA"
+                  value={solicitanteNome}
+                  onChange={(e) => setSolicitanteNome(toUpper(e.target.value))}
+                  onPaste={(e: React.ClipboardEvent<HTMLInputElement>) => {
+                    e.preventDefault();
+                    setSolicitanteNome(toUpper(e.clipboardData?.getData("text")));
+                  }}
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                />
+                {/* Titular da conta */}
+                <div className="mt-2">
+                  <label className="inline-flex items-center gap-2 text-sm text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={titularConta}
+                      onChange={(e) => setTitularConta(e.target.checked)}
+                    />
+                    <span>
+                      Solicitante é o <b>titular da conta</b>
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Documento do solicitante *</label>
+                <input
+                  className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40"
+                  placeholder={docTipo === "CPF" ? "000.000.000-00" : "EX.: RG / PASSAPORTE / ETC."}
+                  value={docTipo === "CPF" ? formatCPF(solicitanteDocumento) : toUpper(solicitanteDocumento)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (docTipo === "CPF") {
+                      // mantém máscara enquanto digita
+                      setSolicitanteDocumento(formatCPF(v));
+                    } else {
+                      setSolicitanteDocumento(toUpper(v));
+                    }
+                  }}
+                  onBlur={() => {
+                    if (docTipo === "CPF" && solicitanteDocumento.trim() && !isValidCPF(solicitanteDocumento)) {
+                      setCpfModalOpen(true);
+                    } else if (docTipo === "CPF") {
+                      // garante máscara final correta
+                      setSolicitanteDocumento(formatCPF(solicitanteDocumento));
+                    }
+                  }}
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                />
+                {/* Rádios embaixo do input */}
+                <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-300">
+                  <label className="inline-flex items-center gap-2">
+                    <input type="radio" checked={docTipo === "CPF"} onChange={() => handleDocTipoChange("CPF")} />
+                    <span>CPF (validação obrigatória)</span>
+                  </label>
+                  <label className="inline-flex items-center gap-2">
+                    <input type="radio" checked={docTipo === "OUTROS"} onChange={() => handleDocTipoChange("OUTROS")} />
+                    <span>OUTROS DOCUMENTO (sem restrição)</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Seção 2: Endereço */}
+          <section className="pt-8 space-y-4">
+            <h3 className="text-sm font-semibold text-slate-300">Endereço</h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Bairro *</label>
+                <input
+                  className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                  placeholder="EX.: CENTRO"
+                  value={bairro}
+                  onChange={(e) => setBairro(toUpper(e.target.value))}
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Rua *</label>
+                <input
+                  className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                  placeholder="EX.: AV. BRASIL"
+                  value={rua}
+                  onChange={(e) => setRua(toUpper(e.target.value))}
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Número *</label>
+                <input
+                  className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                  placeholder="EX.: 123"
+                  value={numero}
+                  onChange={(e) => setNumero(toUpper(e.target.value))}
+                />
+              </div>
+
+              {/* Ponto de referência */}
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Ponto de referência *</label>
+                <input
+                  className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase disabled:opacity-60"
+                  placeholder="EX.: PRÓX. AO POSTO X"
+                  value={pontoRef}
+                  onChange={(e) => setPontoRef(toUpper(e.target.value))}
+                  disabled={pontoRefNaoInformado}
+                />
+                <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-300">
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={pontoRefNaoInformado}
+                      onChange={(e) => setPontoRefNaoInformado(e.target.checked)}
+                    />
+                    <span>Não informado pelo requerente</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Seção 3: Observações */}
+          <section className="pt-8 space-y-4">
+            <h3 className="text-sm font-semibold text-slate-300">Observações</h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Seleção</label>
+                <select
+                  className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                  value={observacaoOpt}
+                  onChange={(e) => setObservacaoOpt((toUpper(e.target.value) as ObsOpt) || "")}
+                >
+                  <option value="">SELECIONE...</option>
+                  <option value="SEM HIDROMETRO NO LOCAL">SEM HIDROMETRO NO LOCAL</option>
+                  <option value="HIDROMETRO VAZANDO">HIDROMETRO VAZANDO</option>
+                  <option value="OUTROS">OUTROS</option>
+                </select>
+              </div>
+
+              {observacaoOpt === "OUTROS" && (
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1">Descreva (maiúsculo)</label>
+                  <input
+                    type="text"
+                    className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
+                    placeholder="DIGITE AQUI..."
+                    value={observacaoOutros}
+                    onChange={(e) => setObservacaoOutros(toUpper(e.target.value))}
+                    onPaste={(e: React.ClipboardEvent<HTMLInputElement>) => {
+                      e.preventDefault();
+                      const text = e.clipboardData?.getData("text");
+                      setObservacaoOutros(toUpper(text));
+                    }}
+                    autoCapitalize="characters"
+                    autoCorrect="off"
+                  />
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* Seção 4: Anexos */}
+          <section className="pt-8 space-y-4">
+            <h3 className="text-sm font-semibold text-slate-300">Anexos</h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-slate-300 mb-2">Anexar PDF da papeleta de Religação *</label>
+                <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30 cursor-pointer">
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    className="hidden"
+                    onChange={(e) =>
+                      setPdfOrdem(e.currentTarget.files && e.currentTarget.files[0] ? e.currentTarget.files[0] : null)
+                    }
+                  />
+                  Selecionar PDF
+                </label>
+                <span className="ml-3 text-xs text-slate-400">
+                  {pdfOrdem ? pdfOrdem.name : "Nenhum arquivo selecionado"}
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-300 mb-2">Anexar comprovante (opcional)</label>
+                <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-500/20 text-purple-200 ring-1 ring-purple-400/40 hover:bg-purple-500/30 cursor-pointer">
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    className="hidden"
+                    onChange={(e) =>
+                      setPdfComprovante(
+                        e.currentTarget.files && e.currentTarget.files[0] ? e.currentTarget.files[0] : null
+                      )
+                    }
+                  />
+                  Selecionar PDF
+                </label>
+                <span className="ml-3 text-xs text-slate-400">
+                  {pdfComprovante ? pdfComprovante.name : "Nenhum arquivo selecionado"}
+                </span>
+              </div>
+            </div>
+          </section>
+
+          {/* Ações */}
+          <section className="pt-8">
+            <div className="flex items-center gap-3">
+              <button
+                type="submit"
+                disabled={saving}
+                className="px-4 py-2 rounded-lg bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-500/30 disabled:opacity-50"
+              >
+                {saving ? "Salvando…" : "Salvar"}
+              </button>
+              <button
+                type="button"
+                onClick={clear}
+                className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10"
+              >
+                Limpar
+              </button>
+            </div>
+          </section>
         </div>
-      )}
+      </form>
 
       {/* Modais */}
       {blockOpen && (
