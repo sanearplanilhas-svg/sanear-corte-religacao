@@ -14,11 +14,11 @@ type PendRow = {
   status: string;
   pdf_ordem_path: string | null;
   created_at: string;
-  precisa_troca_hidrometro: boolean | null;
   observacao: string | null;
   telefone: string | null;
   solicitante_nome: string | null;
   solicitante_documento: string | null;
+  created_by?: string | null; // controle de edição
 };
 
 const DEFAULT_EMPTY = "NÃO INFORMADO";
@@ -59,24 +59,6 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`px-2 py-0.5 text-xs rounded-full ring-1 ${cls} whitespace-nowrap`}>{label}</span>;
 }
 
-function HidrometroBadge({ value }: { value: boolean | null }) {
-  if (value === true) {
-    return (
-      <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-emerald-600/20 text-emerald-200 ring-emerald-400/40 whitespace-nowrap">
-        SIM
-      </span>
-    );
-  }
-  if (value === false) {
-    return (
-      <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-rose-600/20 text-rose-200 ring-rose-400/40 whitespace-nowrap">
-        NÃO
-      </span>
-    );
-  }
-  return <span className="text-slate-400 text-xs whitespace-nowrap">{getEmptyLabel("numero_hidrometro")}</span>;
-}
-
 const ALLOWED_ACTIVATE = new Set(["ADM", "TERCEIRIZADA"]);
 const SENHA_DIRETOR = "29101993";
 type EditField = "bairro" | "rua_numero" | "ponto_referencia" | "telefone";
@@ -100,10 +82,45 @@ export default function PendingReconnectionsTable() {
   const fmtTel = (t?: string | null) => withFallback(t, "telefone");
 
   const [userRole, setUserRole] = React.useState<string>("VISITANTE");
+  const [userId, setUserId] = React.useState<string | null>(null);
   const canActivate = React.useMemo(() => ALLOWED_ACTIVATE.has((userRole || "VISITANTE").toUpperCase()), [userRole]);
 
   const [permModalOpen, setPermModalOpen] = React.useState(false);
   const [permText, setPermText] = React.useState("Apenas TERCEIRIZADA e ADM podem ativar papeletas.");
+
+  // ===== seleção/edição completa =====
+  const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [editModal, setEditModal] = React.useState<{
+    open: boolean;
+    id?: string;
+    matricula?: string;
+    created_by?: string | null;
+    bairro: string;
+    rua: string;
+    numero: string;
+    ponto_referencia: string;
+    telefone: string;
+    solicitante_nome: string;
+    solicitante_documento: string;
+    saving?: boolean;
+  }>({
+    open: false,
+    bairro: "",
+    rua: "",
+    numero: "",
+    ponto_referencia: "",
+    telefone: "",
+    solicitante_nome: "",
+    solicitante_documento: "",
+  });
+
+  const canEditRow = React.useCallback(
+    (row: PendRow) => {
+      if ((userRole || "").toUpperCase() === "ADM") return true;
+      return (row.created_by || null) === (userId || null);
+    },
+    [userRole, userId]
+  );
 
   React.useEffect(() => {
     (async () => {
@@ -113,17 +130,19 @@ export default function PendingReconnectionsTable() {
         const user = (udata && "user" in udata ? (udata as any).user : undefined) as { id: string } | undefined;
         if (!user) {
           setUserRole("VISITANTE");
+          setUserId(null);
           return;
         }
+        setUserId(user.id);
         const { data, error } = await supabase.from("app_users").select("papel").eq("id", user.id).single();
         if (error) throw error;
         setUserRole((data?.papel || "VISITANTE").toUpperCase());
       } catch {
         setUserRole("VISITANTE");
+        setUserId(null);
       }
     })();
   }, []);
-
   async function load() {
     try {
       setLoading(true);
@@ -142,11 +161,11 @@ export default function PendingReconnectionsTable() {
             "status",
             "pdf_ordem_path",
             "created_at",
-            "precisa_troca_hidrometro",
             "observacao",
             "telefone",
             "solicitante_nome",
             "solicitante_documento",
+            "created_by",
           ].join(", ")
         )
         .eq("status", "aguardando_religacao");
@@ -248,6 +267,7 @@ export default function PendingReconnectionsTable() {
     }
   }
 
+  // ===== ATIVAR =====
   const [modalAtivarSim, setModalAtivarSim] = React.useState<{
     open: boolean;
     id?: string;
@@ -271,27 +291,18 @@ export default function PendingReconnectionsTable() {
       setPermModalOpen(true);
       return;
     }
-    if (row.precisa_troca_hidrometro === true) {
-      setModalAtivarSim({
-        open: true,
-        id: row.id,
-        matricula: row.matricula,
-        observacao: row.observacao,
-        novoNumero: "",
-        saving: false,
-      });
-    } else {
-      setModalAtivarNao({
-        open: true,
-        id: row.id,
-        matricula: row.matricula,
-        observacao: row.observacao,
-        saving: false,
-      });
-    }
+    // fluxo igual ao original, sem dependência do campo removido
+    setModalAtivarNao({
+      open: true,
+      id: row.id,
+      matricula: row.matricula,
+      observacao: row.observacao,
+      saving: false,
+    });
   }
 
   async function confirmarAtivarSim() {
+    // Mantido por compatibilidade caso use em outro lugar, mas não é chamado aqui
     if (!modalAtivarSim.id) return;
     if (!canActivate) {
       setPermText("Apenas TERCEIRIZADA e ADM podem ativar papeletas.");
@@ -483,8 +494,7 @@ export default function PendingReconnectionsTable() {
     line("Ponto ref.", pref);
     line("Criada em", dataHora);
 
-    const obsLabel = "Observações:";
-    page.drawText(obsLabel, { x: boxX + 12, y, size: 10, font: fontBold, color: rgb(0, 0, 0) });
+    page.drawText("Observações:", { x: boxX + 12, y, size: 10, font: fontBold, color: rgb(0, 0, 0) });
     const maxPerLine = 60;
     const obs1 = obs.slice(0, maxPerLine);
     const obs2 = obs.length > maxPerLine ? obs.slice(maxPerLine, maxPerLine * 2) : "";
@@ -499,9 +509,122 @@ export default function PendingReconnectionsTable() {
     if (win) win.location.href = blobUrl;
     else window.open(blobUrl, "_blank", "noopener,noreferrer");
   }
+  // ===== abrir modal de edição =====
+  function onClickEditar(row: PendRow) {
+    setSelectedId(row.id);
+    if (!canEditRow(row)) {
+      setPermText("Somente o criador da papeleta ou um usuário ADM podem editar esta ordem.");
+      setPermModalOpen(true);
+      return;
+    }
 
+    setEditModal({
+      open: true,
+      id: row.id,
+      matricula: row.matricula,
+      created_by: row.created_by ?? null,
+      bairro: withFallback(row.bairro, "bairro"),
+      rua: withFallback(row.rua, "rua"),
+      numero: withFallback(row.numero, "numero"),
+      ponto_referencia: row.ponto_referencia ? row.ponto_referencia : "",
+      telefone: row.telefone ? row.telefone : "",
+      solicitante_nome: row.solicitante_nome ? row.solicitante_nome : "",
+      solicitante_documento: row.solicitante_documento ? row.solicitante_documento : "",
+      saving: false,
+    });
+  }
+
+  async function salvarEdicaoCompleta() {
+    if (!editModal.open || !editModal.id) return;
+
+    const row = rows.find((r) => r.id === editModal.id);
+    if (!row) {
+      setMsg({ kind: "err", text: "Registro não encontrado." });
+      setTimeout(() => setMsg(null), 1800);
+      return;
+    }
+    if (!canEditRow(row)) {
+      setPermText("Sem permissão para editar esta ordem.");
+      setPermModalOpen(true);
+      return;
+    }
+
+    const patch = {
+      bairro: (editModal.bairro || "").toUpperCase().trim(),
+      rua: (editModal.rua || "").toUpperCase().trim(),
+      numero: (editModal.numero || "").toUpperCase().trim(),
+      ponto_referencia: (editModal.ponto_referencia || "").trim()
+        ? (editModal.ponto_referencia || "").toUpperCase().trim()
+        : null,
+      telefone: (editModal.telefone || "").trim() ? (editModal.telefone || "").trim() : null,
+      solicitante_nome: (editModal.solicitante_nome || "").toUpperCase().trim(),
+      solicitante_documento: (editModal.solicitante_documento || "").toUpperCase().trim(),
+    };
+
+    try {
+      setEditModal((m) => ({ ...m, saving: true }));
+      const { error } = await supabase.from("ordens_religacao").update(patch).eq("id", editModal.id);
+      if (error) {
+        if (/Impedido|insufficient_privilege|permission|RLS|row-level|policy|denied/i.test(error.message)) {
+          setPermText("A edição foi bloqueada pelas regras de segurança.");
+          setPermModalOpen(true);
+          setEditModal((m) => ({ ...m, saving: false }));
+          return;
+        }
+        throw error;
+      }
+
+      setRows((prev) =>
+        prev.map((r) =>
+          r.id === editModal.id
+            ? {
+                ...r,
+                bairro: patch.bairro,
+                rua: patch.rua,
+                numero: patch.numero,
+                ponto_referencia: patch.ponto_referencia,
+                telefone: patch.telefone,
+                solicitante_nome: patch.solicitante_nome,
+                solicitante_documento: patch.solicitante_documento,
+              }
+            : r
+        )
+      );
+      setMsg({ kind: "ok", text: "Papeleta atualizada com sucesso." });
+      setTimeout(() => setMsg(null), 1600);
+      setEditModal({
+        open: false,
+        bairro: "",
+        rua: "",
+        numero: "",
+        ponto_referencia: "",
+        telefone: "",
+        solicitante_nome: "",
+        solicitante_documento: "",
+      });
+      setSelectedId(null);
+    } catch (e: any) {
+      setMsg({ kind: "err", text: e?.message ?? "Falha ao salvar edição." });
+      setTimeout(() => setMsg(null), 2200);
+      setEditModal((m) => ({ ...m, saving: false }));
+    }
+  }
+
+  // 11 colunas (retirada a “Trocar Hidrômetro?”)
   const colWidths = React.useMemo(
-    () => ["w-32", "w-40", "w-[320px]", "w-[300px]", "w-40", "w-[260px]", "w-28", "w-56", "w-32", "w-40", "w-40"],
+    () => [
+      "w-32",        // matrícula
+      "w-40",        // bairro
+      "w-[320px]",   // rua e nº
+      "w-[300px]",   // ponto ref
+      "w-40",        // telefone
+      "w-[260px]",   // solicitante
+      "w-28",        // prioridade
+      "w-56",        // status / marcar
+      "w-32",        // ordem
+      "w-40",        // criado em
+      "w-40",        // ações (Editar)
+    ],
     []
   );
   const colEls = React.useMemo(() => colWidths.map((cls, i) => <col key={i} className={cls} />), [colWidths]);
@@ -519,7 +642,9 @@ export default function PendingReconnectionsTable() {
             type="button"
             onClick={() => setOver24h((v) => !v)}
             className={`px-3 py-1.5 rounded-lg border text-xs ${
-              over24h ? "bg-rose-600 text-white border-rose-500 hover:bg-rose-500" : "bg-rose-600/90 text-white border-rose-500 hover:bg-rose-600"
+              over24h
+                ? "bg-rose-600 text-white border-rose-500 hover:bg-rose-500"
+                : "bg-rose-600/90 text-white border-rose-500 hover:bg-rose-600"
             }`}
             title="+24h: mostrar apenas papeletas criadas há mais de 24 horas"
           >
@@ -543,19 +668,23 @@ export default function PendingReconnectionsTable() {
       />
 
       {over24h && (
-        <div className="mb-3 text-xs px-3 py-2 rounded-lg bg-rose-500/15 text-rose-300 border border-rose-400/30">
+        <div className="mb-3 text-xs px-3 py-2 rounded-lg bg-rose-500/15 text-rose-300 border-rose-400/30 border">
           Filtro <strong>+24h</strong> ativo: mostrando apenas papeletas criadas há mais de 24h.
         </div>
       )}
 
       {msg && (
-        <div className={`mb-3 text-sm px-3 py-2 rounded-lg ${msg.kind === "ok" ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"}`}>
+        <div
+          className={`mb-3 text-sm px-3 py-2 rounded-lg ${
+            msg.kind === "ok" ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"
+          }`}
+        >
           {msg.text}
         </div>
       )}
 
       <div className="rounded-xl ring-1 ring-white/10 max-h-[60vh] overflow-x-auto overflow-y-auto">
-        <table className="min-w-[1360px] w-max text-sm table-auto">
+        <table className="min-w-[1440px] w-max text-sm table-auto">
           <colgroup>{colEls}</colgroup>
 
           <thead className="sticky top-0 z-20 bg-slate-900/95 text-slate-100 backdrop-blur border-white/10">
@@ -572,17 +701,19 @@ export default function PendingReconnectionsTable() {
               <th className="text-center font-medium py-2 px-3">Status / Marcar</th>
               <th className="text-center font-medium py-2 px-3">Ordem (PDF)</th>
               <th className="text-center font-medium py-2 px-3">Criado em</th>
-              <th className="text-center font-medium py-2 px-3">Trocar Hidrômetro?</th>
+              <th className="text-center font-medium py-2 px-3">Ações</th>
             </tr>
           </thead>
 
           <tbody className="divide-y divide-white/10">
             {rows.map((r) => (
-              <tr key={r.id} className="bg-slate-950/40 align-middle">
+              <tr key={r.id} className={`bg-slate-950/40 align-middle ${selectedId === r.id ? "ring-1 ring-indigo-400/40" : ""}`}>
+                {/* Matricula */}
                 <td className="sticky left-0 z-10 bg-slate-950/80 backdrop-blur px-3 py-2 font-mono whitespace-nowrap border-r border-white/10 text-center">
                   {r.matricula}
                 </td>
 
+                {/* Bairro (editável) */}
                 <td className="py-2 px-3" onDoubleClick={() => startEdit(r, "bairro")}>
                   {editing && editing.id === r.id && editing.field === "bairro" ? (
                     <input
@@ -594,10 +725,13 @@ export default function PendingReconnectionsTable() {
                       className="w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
                     />
                   ) : (
-                    <div className="truncate max-w-[160px]" title={withFallback(r.bairro, "bairro")}>{withFallback(r.bairro, "bairro")}</div>
+                    <div className="truncate max-w-[160px]" title={withFallback(r.bairro, "bairro")}>
+                      {withFallback(r.bairro, "bairro")}
+                    </div>
                   )}
                 </td>
 
+                {/* Rua e nº (editável) */}
                 <td className="py-2 px-3" onDoubleClick={() => startEdit(r, "rua_numero")}>
                   {editing && editing.id === r.id && editing.field === "rua_numero" ? (
                     <div className="flex gap-2">
@@ -630,6 +764,7 @@ export default function PendingReconnectionsTable() {
                   )}
                 </td>
 
+                {/* Ponto ref. (editável) */}
                 <td className="py-2 px-3" onDoubleClick={() => startEdit(r, "ponto_referencia")}>
                   {editing && editing.id === r.id && editing.field === "ponto_referencia" ? (
                     <input
@@ -647,6 +782,7 @@ export default function PendingReconnectionsTable() {
                   )}
                 </td>
 
+                {/* Telefone (editável) */}
                 <td className="py-2 px-3 whitespace-nowrap" onDoubleClick={() => startEdit(r, "telefone")}>
                   {editing && editing.id === r.id && editing.field === "telefone" ? (
                     <input
@@ -663,6 +799,7 @@ export default function PendingReconnectionsTable() {
                   )}
                 </td>
 
+                {/* Solicitante */}
                 <td className="py-2 px-3">
                   <div className="max-w-[240px]">
                     <div className="truncate font-medium" title={withFallback(r.solicitante_nome, "solicitante")}>
@@ -674,18 +811,24 @@ export default function PendingReconnectionsTable() {
                   </div>
                 </td>
 
+                {/* Prioridade */}
                 <td
                   className="py-2 px-3"
                   onDoubleClick={() => onDblClickPrioridade(r)}
                   title="Duplo clique para alternar (requer senha)"
                 >
                   {r.prioridade ? (
-                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-fuchsia-500/20 text-fuchsia-300 ring-1 ring-fuchsia-400/30 whitespace-nowrap">PRIORIDADE</span>
+                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-fuchsia-500/20 text-fuchsia-300 ring-1 ring-fuchsia-400/30 whitespace-nowrap">
+                      PRIORIDADE
+                    </span>
                   ) : (
-                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-slate-500/20 text-slate-300 ring-1 ring-slate-400/30 whitespace-nowrap">Normal</span>
+                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-slate-500/20 text-slate-300 ring-1 ring-slate-400/30 whitespace-nowrap">
+                      Normal
+                    </span>
                   )}
                 </td>
 
+                {/* Status / Ativar */}
                 <td className="py-2 px-3 text-center whitespace-nowrap">
                   <div className="inline-flex items-center gap-2">
                     <StatusBadge status={r.status} />
@@ -699,7 +842,10 @@ export default function PendingReconnectionsTable() {
                     ) : (
                       <button
                         type="button"
-                        onClick={() => { setPermText("Apenas TERCEIRIZADA e ADM podem ativar papeletas."); setPermModalOpen(true); }}
+                        onClick={() => {
+                          setPermText("Apenas TERCEIRIZADA e ADM podem ativar papeletas.");
+                          setPermModalOpen(true);
+                        }}
                         className="px-3 py-1.5 text-xs rounded-lg bg-emerald-600/10 text-emerald-300 ring-1 ring-emerald-400/20 cursor-not-allowed opacity-75 whitespace-nowrap"
                         title="Sem permissão"
                       >
@@ -709,6 +855,7 @@ export default function PendingReconnectionsTable() {
                   </div>
                 </td>
 
+                {/* PDF -> Imprimir */}
                 <td className="py-2 px-3 text-center">
                   {r.pdf_ordem_path ? (
                     <button
@@ -722,8 +869,28 @@ export default function PendingReconnectionsTable() {
                   )}
                 </td>
 
+                {/* Criado em */}
                 <td className="py-2 px-3 text-center whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
-                <td className="py-2 px-3 text-center"><HidrometroBadge value={r.precisa_troca_hidrometro} /></td>
+
+                {/* Ações -> Editar */}
+                <td className="py-2 px-3 text-center">
+                  {canEditRow(r) ? (
+                    <button
+                      onClick={() => onClickEditar(r)}
+                      className="px-3 py-1.5 text-xs rounded-lg bg-sky-600/20 text-sky-200 ring-1 ring-sky-400/40 hover:bg-sky-600/30 whitespace-nowrap"
+                    >
+                      Editar
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => onClickEditar(r)}
+                      className="px-3 py-1.5 text-xs rounded-lg bg-sky-600/10 text-sky-300 ring-1 ring-sky-400/20 opacity-70 cursor-not-allowed whitespace-nowrap"
+                      title="Somente o criador da papeleta ou ADM podem editar"
+                    >
+                      Editar
+                    </button>
+                  )}
+                </td>
               </tr>
             ))}
 
@@ -738,6 +905,7 @@ export default function PendingReconnectionsTable() {
         </table>
       </div>
 
+      {/* Modal de permissão */}
       {permModalOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-lg text-center">
@@ -755,113 +923,97 @@ export default function PendingReconnectionsTable() {
         </div>
       )}
 
-      {modalAtivarSim.open && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-md">
-            <h3 className="text-lg font-semibold text-white mb-3">
-              Ativar matrícula {modalAtivarSim.matricula}
+      {/* Modal de edição completa */}
+      {editModal.open && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
+          <div className="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-2xl">
+            <h3 className="text-lg font-semibold text-white">
+              Editar papeleta — Matrícula {editModal.matricula}
             </h3>
-            <div className="text-slate-300 text-sm mb-3">
-              <div className="font-semibold mb-1">OBSERVAÇÃO:</div>
-              <div className="whitespace-pre-wrap">{withFallback(modalAtivarSim.observacao, "observacao")}</div>
-            </div>
-
-            <label className="block text-sm text-slate-300 mb-1">NOVO NÚMERO DO HIDRÔMETRO</label>
-            <input
-              value={modalAtivarSim.novoNumero ?? ""}
-              onChange={(e) =>
-                setModalAtivarSim((m) => ({ ...m, novoNumero: e.target.value.toUpperCase() }))
-              }
-              className="w-full rounded-xl bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 text-white"
-              placeholder="DIGITE AQUI…"
-              autoFocus
-            />
-
-            <div className="mt-5 flex justify-end gap-3">
-              <button
-                onClick={() => setModalAtivarSim({ open: false })}
-                className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200"
-                disabled={!!modalAtivarSim.saving}
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={confirmarAtivarSim}
-                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-60"
-                disabled={!!modalAtivarSim.saving}
-              >
-                {modalAtivarSim.saving ? "Ativando…" : "Confirmar ativação"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {modalAtivarNao.open && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-md">
-            <h3 className="text-lg font-semibold text-white mb-3">
-              Ativar matrícula {modalAtivarNao.matricula}
-            </h3>
-            <p className="text-slate-300 text-sm">Não é necessário informar novo hidrômetro para esta ordem.</p>
-            <div className="text-slate-300 text-sm mt-3">
-              <div className="font-semibold mb-1">OBSERVAÇÃO:</div>
-              <div className="whitespace-pre-wrap">{withFallback(modalAtivarNao.observacao, "observacao")}</div>
-            </div>
-
-            <div className="mt-5 flex justify-end gap-3">
-              <button
-                onClick={() => setModalAtivarNao({ open: false })}
-                className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200"
-                disabled={!!modalAtivarNao.saving}
-              >
-                Fechar
-              </button>
-              <button
-                onClick={confirmarAtivarNao}
-                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-60"
-                disabled={!!modalAtivarNao.saving}
-              >
-                {modalAtivarNao.saving ? "Ativando…" : "Ativar"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {modalPrioridade.open && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-sm">
-            <h3 className="text-lg font-semibold text-white mb-2">Alterar Prioridade</h3>
-            <p className="text-slate-300 text-sm mb-3">
-              {modalPrioridade.atual ? "Remover prioridade desta ordem?" : "Definir prioridade para esta ordem?"}
+            <p className="text-slate-400 text-xs mt-1">
+              Somente quem criou a papeleta (ou ADM) pode salvar alterações.
             </p>
-            <label className="block text-sm text-slate-300 mb-1">Senha do Diretor</label>
-            <input
-              type="password"
-              value={modalPrioridade.senha ?? ""}
-              onChange={(e) => setModalPrioridade((m) => ({ ...m, senha: e.target.value }))}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") confirmarPrioridade();
-              }}
-              className="w-full rounded-xl bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-fuchsia-400/40 text-white"
-              placeholder="Digite a senha"
-              autoFocus
-            />
-            <div className="mt-5 flex justify-end gap-3">
+
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Solicitante (nome)</label>
+                <input
+                  value={editModal.solicitante_nome}
+                  onChange={(e) => setEditModal((m) => ({ ...m, solicitante_nome: e.target.value.toUpperCase() }))}
+                  className="w-full rounded-lg bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-sky-400/40 text-white uppercase"
+                  placeholder="EX.: JOÃO DA SILVA"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Documento</label>
+                <input
+                  value={editModal.solicitante_documento}
+                  onChange={(e) => setEditModal((m) => ({ ...m, solicitante_documento: e.target.value.toUpperCase() }))}
+                  className="w-full rounded-lg bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-sky-400/40 text-white uppercase"
+                  placeholder="CPF / RG / OUTRO"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Bairro</label>
+                <input
+                  value={editModal.bairro}
+                  onChange={(e) => setEditModal((m) => ({ ...m, bairro: e.target.value.toUpperCase() }))}
+                  className="w-full rounded-lg bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-sky-400/40 text-white uppercase"
+                  placeholder="EX.: CENTRO"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Rua</label>
+                <input
+                  value={editModal.rua}
+                  onChange={(e) => setEditModal((m) => ({ ...m, rua: e.target.value.toUpperCase() }))}
+                  className="w-full rounded-lg bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-sky-400/40 text-white uppercase"
+                  placeholder="EX.: AV. BRASIL"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Número</label>
+                <input
+                  value={editModal.numero}
+                  onChange={(e) => setEditModal((m) => ({ ...m, numero: e.target.value.toUpperCase() }))}
+                  className="w-full rounded-lg bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-sky-400/40 text-white uppercase"
+                  placeholder="EX.: 123"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Ponto de referência</label>
+                <input
+                  value={editModal.ponto_referencia}
+                  onChange={(e) => setEditModal((m) => ({ ...m, ponto_referencia: e.target.value.toUpperCase() }))}
+                  className="w-full rounded-lg bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-sky-400/40 text-white uppercase"
+                  placeholder="OPCIONAL"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm text-slate-300 mb-1">Telefone</label>
+                <input
+                  value={editModal.telefone}
+                  onChange={(e) => setEditModal((m) => ({ ...m, telefone: e.target.value }))}
+                  className="w-full rounded-lg bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-sky-400/40 text-white"
+                  placeholder="(00) 00000-0000"
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
               <button
-                onClick={() => setModalPrioridade({ open: false })}
+                onClick={() => setEditModal((m) => ({ ...m, open: false }))}
                 className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200"
-                disabled={!!modalPrioridade.saving}
+                disabled={!!editModal.saving}
               >
                 Cancelar
               </button>
               <button
-                onClick={confirmarPrioridade}
-                className="px-4 py-2 rounded-lg bg-fuchsia-600 hover:bg-fuchsia-500 text-white disabled:opacity-60"
-                disabled={!!modalPrioridade.saving}
+                onClick={salvarEdicaoCompleta}
+                className="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white disabled:opacity-60"
+                disabled={!!editModal.saving}
               >
-                {modalPrioridade.saving ? "Salvando…" : "Confirmar"}
+                {editModal.saving ? "Salvando…" : "Salvar alterações"}
               </button>
             </div>
           </div>
