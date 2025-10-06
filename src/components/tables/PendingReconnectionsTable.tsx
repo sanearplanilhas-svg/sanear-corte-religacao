@@ -36,7 +36,6 @@ function getEmptyLabel(field?: string) {
 const withFallback = (v?: string | null, field?: string) =>
   v && v.toString().trim() !== "" ? v.toString() : getEmptyLabel(field);
 
-// normalização
 const norm = (s?: string | null) =>
   (s ?? "")
     .toLowerCase()
@@ -78,10 +77,8 @@ function HidrometroBadge({ value }: { value: boolean | null }) {
   return <span className="text-slate-400 text-xs whitespace-nowrap">{getEmptyLabel("numero_hidrometro")}</span>;
 }
 
-// ===== Perfis autorizados a ATIVAR
 const ALLOWED_ACTIVATE = new Set(["ADM", "TERCEIRIZADA"]);
 const SENHA_DIRETOR = "29101993";
-
 type EditField = "bairro" | "rua_numero" | "ponto_referencia" | "telefone";
 
 export default function PendingReconnectionsTable() {
@@ -90,11 +87,8 @@ export default function PendingReconnectionsTable() {
   const [msg, setMsg] = React.useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   const [filter, setFilter] = React.useState<ListFilter>({ q: "", startDate: null, endDate: null });
-
-  // +24h
   const [over24h, setOver24h] = React.useState(false);
 
-  // edição inline (um campo por vez)
   const [editing, setEditing] = React.useState<
     | { id: string; field: "bairro" | "ponto_referencia" | "telefone"; value: string }
     | { id: string; field: "rua_numero"; value: string; value2: string }
@@ -105,7 +99,6 @@ export default function PendingReconnectionsTable() {
   const fmtDateTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR") : getEmptyLabel("datahora"));
   const fmtTel = (t?: string | null) => withFallback(t, "telefone");
 
-  // ===== Papel do usuário e checagem de permissão (para ativar)
   const [userRole, setUserRole] = React.useState<string>("VISITANTE");
   const canActivate = React.useMemo(() => ALLOWED_ACTIVATE.has((userRole || "VISITANTE").toUpperCase()), [userRole]);
 
@@ -130,9 +123,7 @@ export default function PendingReconnectionsTable() {
       }
     })();
   }, []);
-  // =======================================
 
-  // ====== CARREGAR LISTA ======
   async function load() {
     try {
       setLoading(true);
@@ -160,7 +151,6 @@ export default function PendingReconnectionsTable() {
         )
         .eq("status", "aguardando_religacao");
 
-      // Busca rápida
       if (filter.q.trim() !== "") {
         const q = filter.q.trim();
         query = query.or(
@@ -168,7 +158,6 @@ export default function PendingReconnectionsTable() {
         );
       }
 
-      // +24h OU intervalo de datas
       if (over24h) {
         const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
         query = query.lte("created_at", cutoff);
@@ -196,7 +185,6 @@ export default function PendingReconnectionsTable() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
   React.useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -206,7 +194,6 @@ export default function PendingReconnectionsTable() {
     setFilter({ q: "", startDate: null, endDate: null });
   }
 
-  // ====== Helpers edição ======
   function startEdit(row: PendRow, field: EditField) {
     if (field === "rua_numero") {
       setEditing({ id: row.id, field: "rua_numero", value: row.rua, value2: row.numero });
@@ -261,7 +248,6 @@ export default function PendingReconnectionsTable() {
     }
   }
 
-  // ====== FLUXO ATIVAR ======
   const [modalAtivarSim, setModalAtivarSim] = React.useState<{
     open: boolean;
     id?: string;
@@ -390,7 +376,6 @@ export default function PendingReconnectionsTable() {
     }
   }
 
-  // ====== PRIORIDADE (toggle com senha por duplo-clique)
   const [modalPrioridade, setModalPrioridade] = React.useState<{
     open: boolean;
     id?: string;
@@ -398,6 +383,7 @@ export default function PendingReconnectionsTable() {
     senha?: string;
     saving?: boolean;
   }>({ open: false });
+
   function onDblClickPrioridade(row: PendRow) {
     setModalPrioridade({ open: true, id: row.id, atual: row.prioridade, senha: "", saving: false });
   }
@@ -424,14 +410,12 @@ export default function PendingReconnectionsTable() {
     }
   }
 
-  // ====== IMPRESSÃO: carimbar DENTRO do PDF (1ª página) e abrir em nova aba (sem auto-print)
   async function openPrintWindow(row: PendRow) {
     if (!row.pdf_ordem_path) {
       setMsg({ kind: "err", text: "PDF da ordem não encontrado." });
       setTimeout(() => setMsg(null), 1800);
       return;
     }
-
     const { data } = supabase.storage.from("ordens-pdfs").getPublicUrl(row.pdf_ordem_path);
     const pdfUrl = data?.publicUrl;
     if (!pdfUrl) {
@@ -439,14 +423,8 @@ export default function PendingReconnectionsTable() {
       setTimeout(() => setMsg(null), 2000);
       return;
     }
-
-    // Abre janela primeiro para evitar bloqueio de pop-up
     const win = window.open("", "_blank", "width=1024,height=768");
-    try {
-      if (win) (win as any).opener = null;
-    } catch {}
-
-    // Carrega PDF original
+    try { if (win) (win as any).opener = null; } catch {}
     const ab: ArrayBuffer = await fetch(pdfUrl).then((r) => r.arrayBuffer());
     const pdfDoc = await PDFDocument.load(ab);
     const pages = pdfDoc.getPages();
@@ -468,7 +446,6 @@ export default function PendingReconnectionsTable() {
     const obs = withFallback(row.observacao, "observacao").trim();
     const dataHora = row.created_at ? new Date(row.created_at).toLocaleString("pt-BR") : getEmptyLabel("datahora");
 
-    // Bloco central — ajuste as dimensões conforme o layout do seu PDF
     const boxW = Math.min(420, width - 72 * 2);
     const boxH = 130;
     const boxX = (width - boxW) / 2;
@@ -514,21 +491,15 @@ export default function PendingReconnectionsTable() {
     page.drawText(obs1, { x: boxX + 120, y, size: 10, font, color: rgb(0, 0, 0) });
     if (obs2) page.drawText(obs2, { x: boxX + 120, y: y - 12, size: 10, font, color: rgb(0, 0, 0) });
 
-    // Gera o PDF e abre na aba (sem auto-print)
-    const bytes = await pdfDoc.save(); // Uint8Array
+    const bytes = await pdfDoc.save();
     const abuf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
     const blob = new Blob([abuf], { type: "application/pdf" });
     const blobUrl = URL.createObjectURL(blob);
 
-    if (win) {
-      win.location.href = blobUrl; // usuário usa Ctrl+P quando quiser
-    } else {
-      window.open(blobUrl, "_blank", "noopener,noreferrer");
-    }
+    if (win) win.location.href = blobUrl;
+    else window.open(blobUrl, "_blank", "noopener,noreferrer");
   }
 
-  // Evitar whitespace/comentários dentro do <colgroup>
-  // ORDEM: Matrícula (fixa) | Bairro | Rua e nº | Ponto ref. | Telefone | Solicitante | Prioridade | Status/Marcar | Ordem (PDF) | Criado em | Trocar Hidrômetro?
   const colWidths = React.useMemo(
     () => ["w-32", "w-40", "w-[320px]", "w-[300px]", "w-40", "w-[260px]", "w-28", "w-56", "w-32", "w-40", "w-40"],
     []
@@ -583,13 +554,10 @@ export default function PendingReconnectionsTable() {
         </div>
       )}
 
-      {/* >>> Container com rolagem vertical e horizontal */}
       <div className="rounded-xl ring-1 ring-white/10 max-h-[60vh] overflow-x-auto overflow-y-auto">
-        {/* >>> Tabela com largura mínima para habilitar scroll horizontal */}
         <table className="min-w-[1360px] w-max text-sm table-auto">
           <colgroup>{colEls}</colgroup>
 
-          {/* >>> Cabeçalho fixo (apenas Matrícula fixa à esquerda) */}
           <thead className="sticky top-0 z-20 bg-slate-900/95 text-slate-100 backdrop-blur border-white/10">
             <tr>
               <th className="sticky left-0 z-30 bg-slate-900/95 backdrop-blur px-3 py-2 text-center font-medium border-r border-white/10">
@@ -611,12 +579,10 @@ export default function PendingReconnectionsTable() {
           <tbody className="divide-y divide-white/10">
             {rows.map((r) => (
               <tr key={r.id} className="bg-slate-950/40 align-middle">
-                {/* Matricula (centralizada e sticky) */}
                 <td className="sticky left-0 z-10 bg-slate-950/80 backdrop-blur px-3 py-2 font-mono whitespace-nowrap border-r border-white/10 text-center">
                   {r.matricula}
                 </td>
 
-                {/* Bairro (editável) */}
                 <td className="py-2 px-3" onDoubleClick={() => startEdit(r, "bairro")}>
                   {editing && editing.id === r.id && editing.field === "bairro" ? (
                     <input
@@ -632,7 +598,6 @@ export default function PendingReconnectionsTable() {
                   )}
                 </td>
 
-                {/* Rua e nº (editável) */}
                 <td className="py-2 px-3" onDoubleClick={() => startEdit(r, "rua_numero")}>
                   {editing && editing.id === r.id && editing.field === "rua_numero" ? (
                     <div className="flex gap-2">
@@ -641,7 +606,7 @@ export default function PendingReconnectionsTable() {
                         placeholder="RUA"
                         value={editing.value}
                         onChange={(e) =>
-                          setEditing({ id: r.id, field: "rua_numero", value: e.target.value, value2: editing.value2 })
+                          setEditing({ id: r.id, field: "rua_numero", value: e.target.value, value2: (editing as any).value2 })
                         }
                         onKeyDown={onCellKeyDown}
                         onBlur={saveEdit}
@@ -649,7 +614,7 @@ export default function PendingReconnectionsTable() {
                       />
                       <input
                         placeholder="Nº"
-                        value={editing.value2}
+                        value={(editing as any).value2}
                         onChange={(e) =>
                           setEditing({ id: r.id, field: "rua_numero", value: editing.value, value2: e.target.value })
                         }
@@ -665,7 +630,6 @@ export default function PendingReconnectionsTable() {
                   )}
                 </td>
 
-                {/* Ponto ref. (editável) */}
                 <td className="py-2 px-3" onDoubleClick={() => startEdit(r, "ponto_referencia")}>
                   {editing && editing.id === r.id && editing.field === "ponto_referencia" ? (
                     <input
@@ -683,7 +647,6 @@ export default function PendingReconnectionsTable() {
                   )}
                 </td>
 
-                {/* Telefone (editável) */}
                 <td className="py-2 px-3 whitespace-nowrap" onDoubleClick={() => startEdit(r, "telefone")}>
                   {editing && editing.id === r.id && editing.field === "telefone" ? (
                     <input
@@ -700,7 +663,6 @@ export default function PendingReconnectionsTable() {
                   )}
                 </td>
 
-                {/* Solicitante (não editável) */}
                 <td className="py-2 px-3">
                   <div className="max-w-[240px]">
                     <div className="truncate font-medium" title={withFallback(r.solicitante_nome, "solicitante")}>
@@ -712,7 +674,6 @@ export default function PendingReconnectionsTable() {
                   </div>
                 </td>
 
-                {/* Prioridade (duplo clique abre senha e alterna) */}
                 <td
                   className="py-2 px-3"
                   onDoubleClick={() => onDblClickPrioridade(r)}
@@ -725,7 +686,6 @@ export default function PendingReconnectionsTable() {
                   )}
                 </td>
 
-                {/* Status / Ativar */}
                 <td className="py-2 px-3 text-center whitespace-nowrap">
                   <div className="inline-flex items-center gap-2">
                     <StatusBadge status={r.status} />
@@ -749,7 +709,6 @@ export default function PendingReconnectionsTable() {
                   </div>
                 </td>
 
-                {/* PDF -> Imprimir (carimbar + abrir aba) */}
                 <td className="py-2 px-3 text-center">
                   {r.pdf_ordem_path ? (
                     <button
@@ -763,13 +722,8 @@ export default function PendingReconnectionsTable() {
                   )}
                 </td>
 
-                {/* Criado em */}
                 <td className="py-2 px-3 text-center whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
-
-                {/* Hidrômetro? — no final */}
-                <td className="py-2 px-3 text-center">
-                  <HidrometroBadge value={r.precisa_troca_hidrometro} />
-                </td>
+                <td className="py-2 px-3 text-center"><HidrometroBadge value={r.precisa_troca_hidrometro} /></td>
               </tr>
             ))}
 
@@ -784,7 +738,6 @@ export default function PendingReconnectionsTable() {
         </table>
       </div>
 
-      {/* Modal de permissão negada */}
       {permModalOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-lg text-center">
@@ -802,7 +755,6 @@ export default function PendingReconnectionsTable() {
         </div>
       )}
 
-      {/* Modais de ativação */}
       {modalAtivarSim.open && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-md">
@@ -877,7 +829,6 @@ export default function PendingReconnectionsTable() {
         </div>
       )}
 
-      {/* Modal de senha para Prioridade */}
       {modalPrioridade.open && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-sm">

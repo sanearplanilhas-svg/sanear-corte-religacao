@@ -6,11 +6,8 @@ type Msg = { kind: "ok" | "err"; text: string } | null;
 type ObsOpt = "SEM HIDROMETRO NO LOCAL" | "HIDROMETRO VAZANDO" | "OUTROS" | "";
 type DocTipo = "CPF" | "OUTROS";
 
-// ======= ROLES (permissões) =======
 const ALLOWED_CREATE = new Set(["ADM", "DIRETOR", "COORDENADOR", "OPERADOR"]);
-// ==================================
 
-// Helpers tolerantes
 const toUpper = (s?: string | null) => (s ?? "").toUpperCase();
 const onlyDigits = (s?: string | null) => (s ?? "").replace(/\D/g, "");
 const phoneClean = (s?: string | null) => (s ?? "").replace(/[^\d\-\+\(\) ]/g, "").trim();
@@ -19,29 +16,22 @@ const errText = (e: unknown, fallback: string) =>
     ? (e as any).message
     : undefined) || fallback;
 
-// Regex do telefone (mantém como está)
 const PHONE_ALLOWED_RE = /^[0-9\-\+\(\) ]{8,20}$/;
 
-// Mensagens padrão
 const MSG_NAO_INF = "NÃO INFORMADO PELO REQUERENTE";
 const MSG_OUTROS_DOC = "OUTROS DOCUMENTO";
 
 export default function ReconnectionOrderForm() {
-  // flags
   const [telefoneNaoInformado, setTelefoneNaoInformado] = React.useState(false);
   const [pontoRefNaoInformado, setPontoRefNaoInformado] = React.useState(false);
   const [titularConta, setTitularConta] = React.useState(false);
   const [docTipo, setDocTipo] = React.useState<DocTipo>("CPF");
   const [cpfModalOpen, setCpfModalOpen] = React.useState(false);
 
-  // estado — solicitante
   const [solicitanteNome, setSolicitanteNome] = React.useState("");
   const [solicitanteDocumento, setSolicitanteDocumento] = React.useState("");
-
-  // armazenar nome anterior ao marcar “titular da conta”
   const prevNomeRef = React.useRef<string>("");
 
-  // estado — papeleta
   const [matricula, setMatricula] = React.useState("");
   const [telefone, setTelefone] = React.useState("");
   const [bairro, setBairro] = React.useState("");
@@ -60,17 +50,14 @@ export default function ReconnectionOrderForm() {
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [pendingSave, setPendingSave] = React.useState<(() => void) | null>(null);
 
-  // bloqueio 24h
   const [blockOpen, setBlockOpen] = React.useState(false);
   const [tempoRestante, setTempoRestante] = React.useState<string>("");
 
-  // senha prioridade
   const [prioridadeModalOpen, setPrioridadeModalOpen] = React.useState(false);
   const [senhaDiretor, setSenhaDiretor] = React.useState("");
   const [senhaErro, setSenhaErro] = React.useState<string | null>(null);
   const SENHA_DIRETOR = "29101993";
 
-  // observações
   const [observacaoOpt, setObservacaoOpt] = React.useState<ObsOpt>("");
   const [observacaoOutros, setObservacaoOutros] = React.useState("");
   const buildObservacao = () => {
@@ -87,14 +74,12 @@ export default function ReconnectionOrderForm() {
     return parts.length ? parts.join(" | ") : null;
   };
 
-  // relógio
   React.useEffect(() => {
     if (saving) return;
     const id = setInterval(() => setNow(new Date().toLocaleString("pt-BR")), 1000);
     return () => clearInterval(id);
   }, [saving]);
 
-  // ======= papel do usuário e permissões (apenas criação) =======
   const [userRole, setUserRole] = React.useState<string>("VISITANTE");
   const canCreate = React.useMemo(() => ALLOWED_CREATE.has((userRole || "VISITANTE").toUpperCase()), [userRole]);
 
@@ -132,7 +117,6 @@ export default function ReconnectionOrderForm() {
     setPdfComprovante(null);
     setObservacaoOpt("");
     setObservacaoOutros("");
-    // limpar solicitante e rádios
     setSolicitanteNome("");
     setSolicitanteDocumento("");
     setTelefoneNaoInformado(false);
@@ -141,7 +125,6 @@ export default function ReconnectionOrderForm() {
     setDocTipo("CPF");
   }
 
-  // matrícula (manter como está)
   const handleMatricula = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = (e.target.value || "").replace(/\D/g, "");
     if (value.length > 5) value = value.slice(0, 5);
@@ -157,7 +140,6 @@ export default function ReconnectionOrderForm() {
     return matricula;
   };
 
-  // telefone (manter como está)
   const formatTelefonePretty = (digits: string) => {
     let d = digits;
     if (d.startsWith("55")) d = d.slice(2);
@@ -185,7 +167,6 @@ export default function ReconnectionOrderForm() {
     setTelefone(formatTelefonePretty(out));
   };
 
-  // buscar dados de matrícula (mantém)
   async function fetchMatriculaData(m: string) {
     if (!m) return;
 
@@ -225,7 +206,6 @@ export default function ReconnectionOrderForm() {
     }
   }
 
-  // ===== Validação de CPF (Opção 2 — charCodeAt) + formatação de exibição =====
   const formatCPF = (val: string) => {
     const d = onlyDigits(val).slice(0, 11);
     const p1 = d.substring(0, 3);
@@ -243,7 +223,7 @@ export default function ReconnectionOrderForm() {
     if (cpf.length !== 11) return false;
     if (/^(\d)\1{10}$/.test(cpf)) return false;
 
-    const digit = (i: number) => cpf.charCodeAt(i) - 48; // '0' => 48
+    const digit = (i: number) => cpf.charCodeAt(i) - 48;
     let sum = 0;
     for (let i = 0; i < 9; i++) sum += digit(i) * (10 - i);
     let d1 = (sum * 10) % 11;
@@ -264,12 +244,10 @@ export default function ReconnectionOrderForm() {
     if (tipo === "OUTROS") {
       if (!solicitanteDocumento.trim()) setSolicitanteDocumento(MSG_OUTROS_DOC);
     } else {
-      // CPF selecionado: se estava a mensagem de outros, limpa
       if (solicitanteDocumento.trim() === MSG_OUTROS_DOC) setSolicitanteDocumento("");
     }
   };
 
-  // ponto de referência: só preencher com mensagem quando marcado
   React.useEffect(() => {
     if (pontoRefNaoInformado) {
       setPontoRef(MSG_NAO_INF);
@@ -278,10 +256,9 @@ export default function ReconnectionOrderForm() {
     }
   }, [pontoRefNaoInformado, pontoRef]);
 
-  // titular da conta: preencher o campo nome quando marcado; restaurar quando desmarcar
   React.useEffect(() => {
     if (titularConta) {
-      prevNomeRef.current = solicitanteNome; // guarda o que estava
+      prevNomeRef.current = solicitanteNome;
       setSolicitanteNome("TITULAR DA CONTA");
     } else {
       if (solicitanteNome === "TITULAR DA CONTA") {
@@ -291,7 +268,6 @@ export default function ReconnectionOrderForm() {
   }, [titularConta, solicitanteNome]);
 
   function validatePapeleta(): string | null {
-    // obrigatórios
     if (!solicitanteNome.trim()) return "Informe o nome do solicitante.";
     if (!solicitanteDocumento.trim()) return "Informe o documento do solicitante.";
 
@@ -303,8 +279,6 @@ export default function ReconnectionOrderForm() {
     }
 
     if (!matricula.trim()) return "Informe a matrícula.";
-
-    // Telefone: obrigatório, exceto quando marcado 'não informado'
     if (!telefoneNaoInformado) {
       if (!telefone.trim()) return "Informe o telefone de contato.";
       const telDb = phoneClean(telefone);
@@ -312,16 +286,10 @@ export default function ReconnectionOrderForm() {
         return "Telefone inválido. Use apenas números, espaço, +, (, ) e -, com 8 a 20 caracteres.";
       }
     }
-
     if (!bairro.trim()) return "Informe o bairro.";
     if (!rua.trim()) return "Informe a rua.";
     if (!numero.trim()) return "Informe o número.";
-
-    // Ponto de referência: obrigatório, exceto quando marcado 'não informado'
-    if (!pontoRefNaoInformado) {
-      if (!pontoRef.trim()) return "Informe o ponto de referência.";
-    }
-
+    if (!pontoRefNaoInformado && !pontoRef.trim()) return "Informe o ponto de referência.";
     if (!pdfOrdem) return "É obrigatório anexar o PDF da papeleta de religação.";
     if (observacaoOpt === "OUTROS" && !toUpper(observacaoOutros).trim()) {
       return "Informe a observação quando selecionar OUTROS.";
@@ -329,7 +297,6 @@ export default function ReconnectionOrderForm() {
     return null;
   }
 
-  // salvar papeleta
   async function doSave() {
     try {
       const { data: userData, error: userErr } = await supabase.auth.getUser();
@@ -340,7 +307,6 @@ export default function ReconnectionOrderForm() {
       const id = crypto.randomUUID();
       const base = `religacoes/${user.id}/${id}`;
 
-      // uploads
       const [ordemRes, compRes] = await Promise.all([
         pdfOrdem
           ? supabase.storage
@@ -362,12 +328,9 @@ export default function ReconnectionOrderForm() {
 
       const ordemPath = (ordemRes as any)?.data?.path ?? null;
       const compPath = (compRes as any)?.data?.path ?? null;
-
       if (!ordemPath) throw new Error("Falha ao salvar o PDF obrigatório.");
 
-      // telefone sanitizado/nullable
       const telefoneDb = telefoneNaoInformado ? null : phoneClean(telefone);
-      // documento sanitizado
       const solicitanteDocumentoDb =
         docTipo === "CPF" ? onlyDigits(solicitanteDocumento) : toUpper(solicitanteDocumento.trim());
 
@@ -382,7 +345,7 @@ export default function ReconnectionOrderForm() {
         numero: numero.trim(),
         ponto_referencia: pontoRefNaoInformado ? null : pontoRef.trim(),
         prioridade,
-        status: "liberacao_pendente",
+        status: "aguardando_religacao",              // <- direto para aguardando
         precisa_troca_hidrometro: null,
         observacao: buildObservacao(),
         pdf_ordem_path: ordemPath,
@@ -390,7 +353,7 @@ export default function ReconnectionOrderForm() {
       });
       if (insErr) throw insErr;
 
-      setMsg({ kind: "ok", text: "Papeleta salva como PENDENTE DE LIBERAÇÃO." });
+      setMsg({ kind: "ok", text: "Papeleta salva como AGUARDANDO RELIGAÇÃO." });
       clear();
     } catch (e) {
       setMsg({ kind: "err", text: errText(e, "Falha ao salvar.") });
@@ -402,10 +365,9 @@ export default function ReconnectionOrderForm() {
 
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
-
     if (!canCreate) {
-      setPermText("Apenas ADM, DIRETOR, COORDENADOR e OPERADOR podem criar papeletas de religação.");
       setPermModalOpen(true);
+      setPermText("Apenas ADM, DIRETOR, COORDENADOR e OPERADOR podem criar papeletas de religação.");
       return;
     }
 
@@ -417,7 +379,7 @@ export default function ReconnectionOrderForm() {
       return;
     }
 
-    // bloqueio 24h (se a última não estiver ativa)
+    // bloqueio 24h se a última não estiver ATIVA (mantido)
     const { data: ultima, error: errLast } = await supabase
       .from("ordens_religacao")
       .select("created_at, status")
@@ -458,7 +420,6 @@ export default function ReconnectionOrderForm() {
     doSave();
   }
 
-  // prioridade (senha 29101993 como antes)
   function handleClickPrioridade() {
     if (prioridade) {
       setPrioridade(false);
@@ -487,7 +448,6 @@ export default function ReconnectionOrderForm() {
 
   return (
     <div className="rounded-2xl bg-slate-900/50 ring-1 ring-white/10 p-6 relative">
-      {/* Cabeçalho */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold">Religação</h2>
@@ -496,19 +456,16 @@ export default function ReconnectionOrderForm() {
         <div className="text-xs text-emerald-300 font-semibold">{now}</div>
       </div>
 
-      {/* Formulário Único (sem aba de liberação) */}
       <form onSubmit={onSave} className="mt-6">
         <div className="space-y-8 divide-y divide-white/10">
-          {/* Seção 1: Identificação */}
+          {/* Identificação */}
           <section className="space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-slate-300">Identificação</h3>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Coluna esquerda: matrícula + telefone */}
               <div className="grid grid-cols-1 gap-4">
-                {/* Matrícula */}
                 <div>
                   <label className="block text-sm text-slate-300 mb-1">Matrícula *</label>
                   <input
@@ -525,7 +482,6 @@ export default function ReconnectionOrderForm() {
                   />
                 </div>
 
-                {/* Telefone */}
                 <div>
                   <label className="block text-sm text-slate-300 mb-1">Telefone de contato *</label>
                   <input
@@ -538,7 +494,6 @@ export default function ReconnectionOrderForm() {
                     autoComplete="tel"
                     disabled={telefoneNaoInformado}
                   />
-                  {/* Checkbox abaixo do input */}
                   <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-300">
                     <label className="inline-flex items-center gap-2">
                       <input
@@ -557,7 +512,6 @@ export default function ReconnectionOrderForm() {
                 </div>
               </div>
 
-              {/* Coluna direita: Prioridade (senha 29101993) */}
               <div className="rounded-xl bg-slate-950/60 border border-white/10 p-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium text-slate-300">Prioridade</span>
@@ -586,7 +540,7 @@ export default function ReconnectionOrderForm() {
             </div>
           </section>
 
-          {/* Seção 1.1: Solicitante */}
+          {/* Solicitante */}
           <section className="pt-8 space-y-4">
             <h3 className="text-sm font-semibold text-slate-300">Solicitante</h3>
 
@@ -605,7 +559,6 @@ export default function ReconnectionOrderForm() {
                   autoCapitalize="characters"
                   autoCorrect="off"
                 />
-                {/* Titular da conta */}
                 <div className="mt-2">
                   <label className="inline-flex items-center gap-2 text-sm text-slate-300">
                     <input
@@ -628,25 +581,19 @@ export default function ReconnectionOrderForm() {
                   value={docTipo === "CPF" ? formatCPF(solicitanteDocumento) : toUpper(solicitanteDocumento)}
                   onChange={(e) => {
                     const v = e.target.value;
-                    if (docTipo === "CPF") {
-                      // mantém máscara enquanto digita
-                      setSolicitanteDocumento(formatCPF(v));
-                    } else {
-                      setSolicitanteDocumento(toUpper(v));
-                    }
+                    if (docTipo === "CPF") setSolicitanteDocumento(formatCPF(v));
+                    else setSolicitanteDocumento(toUpper(v));
                   }}
                   onBlur={() => {
                     if (docTipo === "CPF" && solicitanteDocumento.trim() && !isValidCPF(solicitanteDocumento)) {
                       setCpfModalOpen(true);
                     } else if (docTipo === "CPF") {
-                      // garante máscara final correta
                       setSolicitanteDocumento(formatCPF(solicitanteDocumento));
                     }
                   }}
                   autoCapitalize="characters"
                   autoCorrect="off"
                 />
-                {/* Rádios embaixo do input */}
                 <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-300">
                   <label className="inline-flex items-center gap-2">
                     <input type="radio" checked={docTipo === "CPF"} onChange={() => handleDocTipoChange("CPF")} />
@@ -661,7 +608,7 @@ export default function ReconnectionOrderForm() {
             </div>
           </section>
 
-          {/* Seção 2: Endereço */}
+          {/* Endereço */}
           <section className="pt-8 space-y-4">
             <h3 className="text-sm font-semibold text-slate-300">Endereço</h3>
 
@@ -694,7 +641,6 @@ export default function ReconnectionOrderForm() {
                 />
               </div>
 
-              {/* Ponto de referência */}
               <div>
                 <label className="block text-sm text-slate-300 mb-1">Ponto de referência *</label>
                 <input
@@ -718,7 +664,7 @@ export default function ReconnectionOrderForm() {
             </div>
           </section>
 
-          {/* Seção 3: Observações */}
+          {/* Observações */}
           <section className="pt-8 space-y-4">
             <h3 className="text-sm font-semibold text-slate-300">Observações</h3>
 
@@ -759,7 +705,7 @@ export default function ReconnectionOrderForm() {
             </div>
           </section>
 
-          {/* Seção 4: Anexos */}
+          {/* Anexos */}
           <section className="pt-8 space-y-4">
             <h3 className="text-sm font-semibold text-slate-300">Anexos</h3>
 
@@ -826,7 +772,7 @@ export default function ReconnectionOrderForm() {
         </div>
       </form>
 
-      {/* Modais */}
+      {/* Modais auxiliares */}
       {blockOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-rose-700 p-6 rounded-xl text-center max-w-sm w-full text-white">
@@ -867,7 +813,6 @@ export default function ReconnectionOrderForm() {
         </div>
       )}
 
-      {/* Modal CPF inválido */}
       {cpfModalOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-sm">
@@ -896,7 +841,6 @@ export default function ReconnectionOrderForm() {
         </div>
       )}
 
-      {/* Modal de permissão negada */}
       {permModalOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-lg text-center">
@@ -917,7 +861,6 @@ export default function ReconnectionOrderForm() {
         </div>
       )}
 
-      {/* Toast */}
       {msg && (
         <div
           className={`fixed bottom-5 right-5 px-4 py-2 rounded-lg shadow-lg text-sm z-50 ${
@@ -928,7 +871,6 @@ export default function ReconnectionOrderForm() {
         </div>
       )}
 
-      {/* Modal de prioridade */}
       {prioridadeModalOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-sm">
