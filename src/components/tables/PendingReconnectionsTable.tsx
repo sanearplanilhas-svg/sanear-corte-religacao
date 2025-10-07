@@ -18,7 +18,7 @@ type PendRow = {
   telefone: string | null;
   solicitante_nome: string | null;
   solicitante_documento: string | null;
-  created_by?: string | null; // controle de edição
+  created_by?: string | null;
 };
 
 const DEFAULT_EMPTY = "NÃO INFORMADO";
@@ -60,8 +60,6 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 const ALLOWED_ACTIVATE = new Set(["ADM", "TERCEIRIZADA"]);
-const SENHA_DIRETOR = "29101993";
-type EditField = "bairro" | "rua_numero" | "ponto_referencia" | "telefone";
 
 export default function PendingReconnectionsTable() {
   const [rows, setRows] = React.useState<PendRow[]>([]);
@@ -71,6 +69,7 @@ export default function PendingReconnectionsTable() {
   const [filter, setFilter] = React.useState<ListFilter>({ q: "", startDate: null, endDate: null });
   const [over24h, setOver24h] = React.useState(false);
 
+  // edição por célula (duplo clique)
   const [editing, setEditing] = React.useState<
     | { id: string; field: "bairro" | "ponto_referencia" | "telefone"; value: string }
     | { id: string; field: "rua_numero"; value: string; value2: string }
@@ -81,6 +80,7 @@ export default function PendingReconnectionsTable() {
   const fmtDateTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR") : getEmptyLabel("datahora"));
   const fmtTel = (t?: string | null) => withFallback(t, "telefone");
 
+  // papel
   const [userRole, setUserRole] = React.useState<string>("VISITANTE");
   const [userId, setUserId] = React.useState<string | null>(null);
   const canActivate = React.useMemo(() => ALLOWED_ACTIVATE.has((userRole || "VISITANTE").toUpperCase()), [userRole]);
@@ -88,32 +88,7 @@ export default function PendingReconnectionsTable() {
   const [permModalOpen, setPermModalOpen] = React.useState(false);
   const [permText, setPermText] = React.useState("Apenas TERCEIRIZADA e ADM podem ativar papeletas.");
 
-  // ===== seleção/edição completa =====
-  const [selectedId, setSelectedId] = React.useState<string | null>(null);
-  const [editModal, setEditModal] = React.useState<{
-    open: boolean;
-    id?: string;
-    matricula?: string;
-    created_by?: string | null;
-    bairro: string;
-    rua: string;
-    numero: string;
-    ponto_referencia: string;
-    telefone: string;
-    solicitante_nome: string;
-    solicitante_documento: string;
-    saving?: boolean;
-  }>({
-    open: false,
-    bairro: "",
-    rua: "",
-    numero: "",
-    ponto_referencia: "",
-    telefone: "",
-    solicitante_nome: "",
-    solicitante_documento: "",
-  });
-
+  // pode editar? (ADM sempre pode; senão, apenas o criador)
   const canEditRow = React.useCallback(
     (row: PendRow) => {
       if ((userRole || "").toUpperCase() === "ADM") return true;
@@ -143,10 +118,11 @@ export default function PendingReconnectionsTable() {
       }
     })();
   }, []);
+
+  // ====== carregar lista ======
   async function load() {
     try {
       setLoading(true);
-
       let query = supabase
         .from("ordens_religacao")
         .select(
@@ -188,7 +164,6 @@ export default function PendingReconnectionsTable() {
       query = query.order("created_at", { ascending: false });
 
       const { data, error } = await query;
-
       if (error) {
         setMsg({ kind: "err", text: error.message });
         setTimeout(() => setMsg(null), 2200);
@@ -199,21 +174,20 @@ export default function PendingReconnectionsTable() {
       setLoading(false);
     }
   }
-
-  React.useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  React.useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [over24h]);
+  React.useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  React.useEffect(() => { load(); /* eslint-disable-next-line */ }, [over24h]);
 
   function clearFilters() {
     setFilter({ q: "", startDate: null, endDate: null });
   }
 
-  function startEdit(row: PendRow, field: EditField) {
+  // ====== edição por célula (duplo clique) ======
+  function startEdit(row: PendRow, field: "bairro" | "rua_numero" | "ponto_referencia" | "telefone") {
+    if (!canEditRow(row)) {
+      setPermText("Você não pode editar essa papeleta. Apenas o criador (ou ADM) pode editar campos.");
+      setPermModalOpen(true);
+      return;
+    }
     if (field === "rua_numero") {
       setEditing({ id: row.id, field: "rua_numero", value: row.rua, value2: row.numero });
     } else if (field === "bairro") {
@@ -228,13 +202,12 @@ export default function PendingReconnectionsTable() {
   async function saveEdit() {
     if (!editing || savingCell) return;
     setSavingCell(true);
-
     try {
       const id = editing.id;
 
       if (editing.field === "rua_numero") {
         const rua = (editing.value || "").toUpperCase().trim();
-        const numero = (editing.value2 || "").toUpperCase().trim();
+        const numero = (editing as any).value2 ? (editing as any).value2.toUpperCase().trim() : "";
         const { error } = await supabase.from("ordens_religacao").update({ rua, numero }).eq("id", id);
         if (error) throw error;
         setRows((prev) => prev.map((r) => (r.id === id ? { ...r, rua, numero } : r)));
@@ -259,31 +232,14 @@ export default function PendingReconnectionsTable() {
   }
 
   function onCellKeyDown(e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      saveEdit();
-    } else if (e.key === "Escape") {
-      setEditing(null);
-    }
+    if (e.key === "Enter") { e.preventDefault(); saveEdit(); }
+    else if (e.key === "Escape") { setEditing(null); }
   }
 
-  // ===== ATIVAR =====
-  const [modalAtivarSim, setModalAtivarSim] = React.useState<{
-    open: boolean;
-    id?: string;
-    matricula?: string;
-    observacao?: string | null;
-    novoNumero?: string;
-    saving?: boolean;
-  }>({ open: false });
-
-  const [modalAtivarNao, setModalAtivarNao] = React.useState<{
-    open: boolean;
-    id?: string;
-    matricula?: string;
-    observacao?: string | null;
-    saving?: boolean;
-  }>({ open: false });
+  // ====== ATIVAR ======
+  const [confirmOpen, setConfirmOpen] = React.useState<{ open: boolean; id?: string; matricula?: string; saving?: boolean }>({
+    open: false,
+  });
 
   function onClickAtivar(row: PendRow) {
     if (!canActivate) {
@@ -291,136 +247,163 @@ export default function PendingReconnectionsTable() {
       setPermModalOpen(true);
       return;
     }
-    // fluxo igual ao original, sem dependência do campo removido
-    setModalAtivarNao({
+    setConfirmOpen({ open: true, id: row.id, matricula: row.matricula, saving: false });
+  }
+
+  async function confirmarAtivar() {
+    if (!confirmOpen.open || !confirmOpen.id) return;
+    if (!canActivate) {
+      setPermText("Apenas TERCEIRIZADA e ADM podem ativar papeletas.");
+      setPermModalOpen(true);
+      return;
+    }
+    try {
+      setConfirmOpen((m) => ({ ...m, saving: true }));
+      const { data, error } = await supabase
+        .from("ordens_religacao")
+        .update({ status: "ativa" })
+        .eq("id", confirmOpen.id)
+        .select("id,status,ativa_em")
+        .single();
+
+      if (error) {
+        if (/Impedido|insufficient_privilege|permission|RLS|row-level|policy|denied/i.test(error.message)) {
+          setPermText("A operação foi bloqueada pelas regras de segurança.");
+          setPermModalOpen(true);
+          setConfirmOpen({ open: false });
+          return;
+        }
+        setMsg({ kind: "err", text: `Falha ao ativar: ${error.message}` });
+        setTimeout(() => setMsg(null), 2200);
+        setConfirmOpen({ open: false });
+        return;
+      }
+
+      await load();
+      setMsg({
+        kind: "ok",
+        text: `Papeleta ATIVADA. ${data?.ativa_em ? `(${new Date(data.ativa_em).toLocaleString("pt-BR")})` : ""}`,
+      });
+      setTimeout(() => setMsg(null), 1800);
+      setConfirmOpen({ open: false });
+    } catch (e: any) {
+      setMsg({ kind: "err", text: e?.message ?? "Falha ao ativar." });
+      setTimeout(() => setMsg(null), 2200);
+      setConfirmOpen({ open: false });
+    }
+  }
+
+  // ====== MODAL "EDITAR" (inclui troca de PDF) ======
+  const [editModal, setEditModal] = React.useState<{
+    open: boolean;
+    saving?: boolean;
+    row?: PendRow;
+    form?: {
+      bairro: string;
+      rua: string;
+      numero: string;
+      ponto_referencia: string;
+      telefone: string;
+      newPdfFile?: File | null;
+      newPdfName?: string | null;
+    };
+  }>({ open: false });
+
+  const fileRef = React.useRef<HTMLInputElement | null>(null);
+
+  function openEditModal(row: PendRow) {
+    if (!canEditRow(row)) {
+      setPermText("Você não pode editar essa papeleta. Apenas o criador (ou ADM) pode editar campos.");
+      setPermModalOpen(true);
+      return;
+    }
+    setEditModal({
       open: true,
-      id: row.id,
-      matricula: row.matricula,
-      observacao: row.observacao,
       saving: false,
+      row,
+      form: {
+        bairro: row.bairro || "",
+        rua: row.rua || "",
+        numero: row.numero || "",
+        ponto_referencia: row.ponto_referencia || "",
+        telefone: row.telefone || "",
+        newPdfFile: null,
+        newPdfName: null,
+      },
     });
   }
 
-  async function confirmarAtivarSim() {
-    // Mantido por compatibilidade caso use em outro lugar, mas não é chamado aqui
-    if (!modalAtivarSim.id) return;
-    if (!canActivate) {
-      setPermText("Apenas TERCEIRIZADA e ADM podem ativar papeletas.");
-      setPermModalOpen(true);
+  function onPickPdfClick() {
+    fileRef.current?.click();
+  }
+
+  function onPdfFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0] || null;
+    if (!f) return;
+    if (f.type !== "application/pdf") {
+      setMsg({ kind: "err", text: "Selecione um arquivo PDF válido." });
+      setTimeout(() => setMsg(null), 2000);
       return;
     }
+    setEditModal((m) =>
+      m.open && m.form
+        ? { ...m, form: { ...m.form, newPdfFile: f, newPdfName: f.name } }
+        : m
+    );
+  }
 
-    const id = modalAtivarSim.id;
-    const numeroNovo = (modalAtivarSim.novoNumero ?? "").trim();
-    const baseObs = (modalAtivarSim.observacao ?? "").toUpperCase();
-    const extra = numeroNovo ? (baseObs ? ` | NOVO HIDRÔMETRO: ${numeroNovo}` : `NOVO HIDRÔMETRO: ${numeroNovo}`) : "";
-    const novaObs = (baseObs + extra).trim();
-
+  async function salvarEditModal() {
+    if (!editModal.open || !editModal.row || !editModal.form) return;
     try {
-      setModalAtivarSim((m) => ({ ...m, saving: true }));
-      const { error } = await supabase
-        .from("ordens_religacao")
-        .update({ status: "ativa", ativa_em: new Date().toISOString(), observacao: novaObs })
-        .eq("id", id);
+      setEditModal((m) => ({ ...m, saving: true }));
+      const id = editModal.row.id;
 
-      if (error) {
-        if (/Impedido|insufficient_privilege|permission|RLS|row-level|policy|denied/i.test(error.message)) {
-          setPermText("A operação foi bloqueada pelas regras de segurança.");
-          setPermModalOpen(true);
-          setModalAtivarSim((m) => ({ ...m, saving: false }));
-          return;
-        }
-        setMsg({ kind: "err", text: `Falha ao ativar: ${error.message}` });
-        setTimeout(() => setMsg(null), 2200);
-        setModalAtivarSim((m) => ({ ...m, saving: false }));
-        return;
+      // monta patch de campos textuais
+      const patch: Record<string, any> = {
+        bairro: (editModal.form.bairro || "").toUpperCase().trim(),
+        rua: (editModal.form.rua || "").toUpperCase().trim(),
+        numero: (editModal.form.numero || "").toUpperCase().trim(),
+        ponto_referencia: (editModal.form.ponto_referencia || "").toUpperCase().trim(),
+        telefone: (editModal.form.telefone || "").toUpperCase().trim(),
+      };
+
+      // se houver novo PDF, faz upload e inclui no patch
+      if (editModal.form.newPdfFile) {
+        const safeMat = (editModal.row.matricula || "SEM_MATRICULA").toString().replace(/[^\w\-]+/g, "");
+        const ts = Date.now();
+        const path = `religacoes/${safeMat}_${id}_${ts}.pdf`;
+
+        const { error: upErr } = await supabase
+          .storage
+          .from("ordens-pdfs")
+          .upload(path, editModal.form.newPdfFile, { upsert: true, contentType: "application/pdf" });
+
+        if (upErr) throw upErr;
+
+        patch.pdf_ordem_path = path;
       }
 
-      await load();
-      setMsg({ kind: "ok", text: "Papeleta marcada como ATIVA." });
-      setTimeout(() => setMsg(null), 1800);
-      setModalAtivarSim({ open: false });
-    } catch (e: any) {
-      setMsg({ kind: "err", text: e?.message ?? "Falha ao ativar." });
-      setTimeout(() => setMsg(null), 2200);
-      setModalAtivarSim((m) => ({ ...m, saving: false }));
-    }
-  }
-
-  async function confirmarAtivarNao() {
-    if (!modalAtivarNao.id) return;
-    if (!canActivate) {
-      setPermText("Apenas TERCEIRIZADA e ADM podem ativar papeletas.");
-      setPermModalOpen(true);
-      return;
-    }
-
-    const id = modalAtivarNao.id;
-    try {
-      setModalAtivarNao((m) => ({ ...m, saving: true }));
-      const { error } = await supabase
-        .from("ordens_religacao")
-        .update({ status: "ativa", ativa_em: new Date().toISOString() })
-        .eq("id", id);
-
-      if (error) {
-        if (/Impedido|insufficient_privilege|permission|RLS|row-level|policy|denied/i.test(error.message)) {
-          setPermText("A operação foi bloqueada pelas regras de segurança.");
-          setPermModalOpen(true);
-          setModalAtivarNao((m) => ({ ...m, saving: false }));
-          return;
-        }
-        setMsg({ kind: "err", text: `Falha ao ativar: ${error.message}` });
-        setTimeout(() => setMsg(null), 2200);
-        setModalAtivarNao((m) => ({ ...m, saving: false }));
-        return;
-      }
-
-      await load();
-      setMsg({ kind: "ok", text: "Papeleta marcada como ATIVA." });
-      setTimeout(() => setMsg(null), 1800);
-      setModalAtivarNao({ open: false });
-    } catch (e: any) {
-      setMsg({ kind: "err", text: e?.message ?? "Falha ao ativar." });
-      setTimeout(() => setMsg(null), 2200);
-      setModalAtivarNao((m) => ({ ...m, saving: false }));
-    }
-  }
-
-  const [modalPrioridade, setModalPrioridade] = React.useState<{
-    open: boolean;
-    id?: string;
-    atual?: boolean;
-    senha?: string;
-    saving?: boolean;
-  }>({ open: false });
-
-  function onDblClickPrioridade(row: PendRow) {
-    setModalPrioridade({ open: true, id: row.id, atual: row.prioridade, senha: "", saving: false });
-  }
-  async function confirmarPrioridade() {
-    if (!modalPrioridade.open || !modalPrioridade.id) return;
-    if ((modalPrioridade.senha || "") !== SENHA_DIRETOR) {
-      setMsg({ kind: "err", text: "Senha inválida." });
-      setTimeout(() => setMsg(null), 1500);
-      return;
-    }
-    try {
-      setModalPrioridade((m) => ({ ...m, saving: true }));
-      const novo = !modalPrioridade.atual;
-      const { error } = await supabase.from("ordens_religacao").update({ prioridade: novo }).eq("id", modalPrioridade.id);
+      const { error } = await supabase.from("ordens_religacao").update(patch).eq("id", id);
       if (error) throw error;
-      setRows((prev) => prev.map((r) => (r.id === modalPrioridade.id ? { ...r, prioridade: novo } : r)));
-      setMsg({ kind: "ok", text: "Prioridade atualizada." });
-      setTimeout(() => setMsg(null), 1500);
-      setModalPrioridade({ open: false });
+
+      // atualiza estado local
+      setRows((prev) =>
+        prev.map((r) =>
+          r.id === id ? { ...r, ...patch } : r
+        )
+      );
+
+      setMsg({ kind: "ok", text: "Dados da papeleta atualizados." });
+      setTimeout(() => setMsg(null), 1800);
+      setEditModal({ open: false });
     } catch (e: any) {
-      setMsg({ kind: "err", text: e?.message ?? "Falha ao atualizar prioridade." });
+      setMsg({ kind: "err", text: e?.message ?? "Falha ao salvar alterações." });
       setTimeout(() => setMsg(null), 2200);
-      setModalPrioridade((m) => ({ ...m, saving: false }));
+      setEditModal({ open: false });
     }
   }
 
+  // ====== impressão ======
   async function openPrintWindow(row: PendRow) {
     if (!row.pdf_ordem_path) {
       setMsg({ kind: "err", text: "PDF da ordem não encontrado." });
@@ -509,121 +492,12 @@ export default function PendingReconnectionsTable() {
     if (win) win.location.href = blobUrl;
     else window.open(blobUrl, "_blank", "noopener,noreferrer");
   }
-  // ===== abrir modal de edição =====
-  function onClickEditar(row: PendRow) {
-    setSelectedId(row.id);
-    if (!canEditRow(row)) {
-      setPermText("Somente o criador da papeleta ou um usuário ADM podem editar esta ordem.");
-      setPermModalOpen(true);
-      return;
-    }
 
-    setEditModal({
-      open: true,
-      id: row.id,
-      matricula: row.matricula,
-      created_by: row.created_by ?? null,
-      bairro: withFallback(row.bairro, "bairro"),
-      rua: withFallback(row.rua, "rua"),
-      numero: withFallback(row.numero, "numero"),
-      ponto_referencia: row.ponto_referencia ? row.ponto_referencia : "",
-      telefone: row.telefone ? row.telefone : "",
-      solicitante_nome: row.solicitante_nome ? row.solicitante_nome : "",
-      solicitante_documento: row.solicitante_documento ? row.solicitante_documento : "",
-      saving: false,
-    });
-  }
-
-  async function salvarEdicaoCompleta() {
-    if (!editModal.open || !editModal.id) return;
-
-    const row = rows.find((r) => r.id === editModal.id);
-    if (!row) {
-      setMsg({ kind: "err", text: "Registro não encontrado." });
-      setTimeout(() => setMsg(null), 1800);
-      return;
-    }
-    if (!canEditRow(row)) {
-      setPermText("Sem permissão para editar esta ordem.");
-      setPermModalOpen(true);
-      return;
-    }
-
-    const patch = {
-      bairro: (editModal.bairro || "").toUpperCase().trim(),
-      rua: (editModal.rua || "").toUpperCase().trim(),
-      numero: (editModal.numero || "").toUpperCase().trim(),
-      ponto_referencia: (editModal.ponto_referencia || "").trim()
-        ? (editModal.ponto_referencia || "").toUpperCase().trim()
-        : null,
-      telefone: (editModal.telefone || "").trim() ? (editModal.telefone || "").trim() : null,
-      solicitante_nome: (editModal.solicitante_nome || "").toUpperCase().trim(),
-      solicitante_documento: (editModal.solicitante_documento || "").toUpperCase().trim(),
-    };
-
-    try {
-      setEditModal((m) => ({ ...m, saving: true }));
-      const { error } = await supabase.from("ordens_religacao").update(patch).eq("id", editModal.id);
-      if (error) {
-        if (/Impedido|insufficient_privilege|permission|RLS|row-level|policy|denied/i.test(error.message)) {
-          setPermText("A edição foi bloqueada pelas regras de segurança.");
-          setPermModalOpen(true);
-          setEditModal((m) => ({ ...m, saving: false }));
-          return;
-        }
-        throw error;
-      }
-
-      setRows((prev) =>
-        prev.map((r) =>
-          r.id === editModal.id
-            ? {
-                ...r,
-                bairro: patch.bairro,
-                rua: patch.rua,
-                numero: patch.numero,
-                ponto_referencia: patch.ponto_referencia,
-                telefone: patch.telefone,
-                solicitante_nome: patch.solicitante_nome,
-                solicitante_documento: patch.solicitante_documento,
-              }
-            : r
-        )
-      );
-      setMsg({ kind: "ok", text: "Papeleta atualizada com sucesso." });
-      setTimeout(() => setMsg(null), 1600);
-      setEditModal({
-        open: false,
-        bairro: "",
-        rua: "",
-        numero: "",
-        ponto_referencia: "",
-        telefone: "",
-        solicitante_nome: "",
-        solicitante_documento: "",
-      });
-      setSelectedId(null);
-    } catch (e: any) {
-      setMsg({ kind: "err", text: e?.message ?? "Falha ao salvar edição." });
-      setTimeout(() => setMsg(null), 2200);
-      setEditModal((m) => ({ ...m, saving: false }));
-    }
-  }
-
-  // 11 colunas (retirada a “Trocar Hidrômetro?”)
+  // colgroup
   const colWidths = React.useMemo(
     () => [
-      "w-32",        // matrícula
-      "w-40",        // bairro
-      "w-[320px]",   // rua e nº
-      "w-[300px]",   // ponto ref
-      "w-40",        // telefone
-      "w-[260px]",   // solicitante
-      "w-28",        // prioridade
-      "w-56",        // status / marcar
-      "w-32",        // ordem
-      "w-40",        // criado em
-      "w-40",        // ações (Editar)
+      "w-32", "w-40", "w-[320px]", "w-[300px]", "w-40",
+      "w-[260px]", "w-28", "w-56", "w-32", "w-40", "w-32", // + “Editar”
     ],
     []
   );
@@ -642,9 +516,8 @@ export default function PendingReconnectionsTable() {
             type="button"
             onClick={() => setOver24h((v) => !v)}
             className={`px-3 py-1.5 rounded-lg border text-xs ${
-              over24h
-                ? "bg-rose-600 text-white border-rose-500 hover:bg-rose-500"
-                : "bg-rose-600/90 text-white border-rose-500 hover:bg-rose-600"
+              over24h ? "bg-rose-600 text-white border-rose-500 hover:bg-rose-500"
+                      : "bg-rose-600/90 text-white border-rose-500 hover:bg-rose-600"
             }`}
             title="+24h: mostrar apenas papeletas criadas há mais de 24 horas"
           >
@@ -661,10 +534,7 @@ export default function PendingReconnectionsTable() {
         value={filter}
         onChange={setFilter}
         onSearch={load}
-        onClear={() => {
-          clearFilters();
-          setTimeout(load, 0);
-        }}
+        onClear={() => { clearFilters(); setTimeout(load, 0); }}
       />
 
       {over24h && (
@@ -674,17 +544,15 @@ export default function PendingReconnectionsTable() {
       )}
 
       {msg && (
-        <div
-          className={`mb-3 text-sm px-3 py-2 rounded-lg ${
-            msg.kind === "ok" ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"
-          }`}
-        >
+        <div className={`mb-3 text-sm px-3 py-2 rounded-lg ${
+          msg.kind === "ok" ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"
+        }`}>
           {msg.text}
         </div>
       )}
 
       <div className="rounded-xl ring-1 ring-white/10 max-h-[60vh] overflow-x-auto overflow-y-auto">
-        <table className="min-w-[1440px] w-max text-sm table-auto">
+        <table className="min-w-[1520px] w-max text-sm table-auto">
           <colgroup>{colEls}</colgroup>
 
           <thead className="sticky top-0 z-20 bg-slate-900/95 text-slate-100 backdrop-blur border-white/10">
@@ -701,198 +569,167 @@ export default function PendingReconnectionsTable() {
               <th className="text-center font-medium py-2 px-3">Status / Marcar</th>
               <th className="text-center font-medium py-2 px-3">Ordem (PDF)</th>
               <th className="text-center font-medium py-2 px-3">Criado em</th>
-              <th className="text-center font-medium py-2 px-3">Ações</th>
+              <th className="text-center font-medium py-2 px-3">Editar</th>
             </tr>
           </thead>
 
           <tbody className="divide-y divide-white/10">
-            {rows.map((r) => (
-              <tr key={r.id} className={`bg-slate-950/40 align-middle ${selectedId === r.id ? "ring-1 ring-indigo-400/40" : ""}`}>
-                {/* Matricula */}
-                <td className="sticky left-0 z-10 bg-slate-950/80 backdrop-blur px-3 py-2 font-mono whitespace-nowrap border-r border-white/10 text-center">
-                  {r.matricula}
-                </td>
+            {rows.map((r) => {
+              const canEdit = canEditRow(r);
+              return (
+                <tr key={r.id} className="bg-slate-950/40 align-middle">
+                  <td className="sticky left-0 z-10 bg-slate-950/80 backdrop-blur px-3 py-2 font-mono whitespace-nowrap border-r border-white/10 text-center">
+                    {r.matricula}
+                  </td>
 
-                {/* Bairro (editável) */}
-                <td className="py-2 px-3" onDoubleClick={() => startEdit(r, "bairro")}>
-                  {editing && editing.id === r.id && editing.field === "bairro" ? (
-                    <input
-                      autoFocus
-                      value={editing.value}
-                      onChange={(e) => setEditing({ id: r.id, field: "bairro", value: e.target.value })}
-                      onBlur={saveEdit}
-                      onKeyDown={onCellKeyDown}
-                      className="w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
-                    />
-                  ) : (
-                    <div className="truncate max-w-[160px]" title={withFallback(r.bairro, "bairro")}>
-                      {withFallback(r.bairro, "bairro")}
-                    </div>
-                  )}
-                </td>
-
-                {/* Rua e nº (editável) */}
-                <td className="py-2 px-3" onDoubleClick={() => startEdit(r, "rua_numero")}>
-                  {editing && editing.id === r.id && editing.field === "rua_numero" ? (
-                    <div className="flex gap-2">
+                  <td className="py-2 px-3" onDoubleClick={() => startEdit(r, "bairro")}>
+                    {editing && editing.id === r.id && editing.field === "bairro" ? (
                       <input
                         autoFocus
-                        placeholder="RUA"
                         value={editing.value}
-                        onChange={(e) =>
-                          setEditing({ id: r.id, field: "rua_numero", value: e.target.value, value2: (editing as any).value2 })
-                        }
-                        onKeyDown={onCellKeyDown}
+                        onChange={(e) => setEditing({ id: r.id, field: "bairro", value: e.target.value })}
                         onBlur={saveEdit}
+                        onKeyDown={onCellKeyDown}
                         className="w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
                       />
+                    ) : (
+                      <div className="truncate max-w-[160px]" title={withFallback(r.bairro, "bairro")}>
+                        {withFallback(r.bairro, "bairro")}
+                      </div>
+                    )}
+                  </td>
+
+                  <td className="py-2 px-3" onDoubleClick={() => startEdit(r, "rua_numero")}>
+                    {editing && editing.id === r.id && editing.field === "rua_numero" ? (
+                      <div className="flex gap-2">
+                        <input
+                          autoFocus
+                          placeholder="RUA"
+                          value={editing.value}
+                          onChange={(e) =>
+                            setEditing({ id: r.id, field: "rua_numero", value: e.target.value, value2: (editing as any).value2 })
+                          }
+                          onKeyDown={onCellKeyDown}
+                          onBlur={saveEdit}
+                          className="w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
+                        />
+                        <input
+                          placeholder="Nº"
+                          value={(editing as any).value2}
+                          onChange={(e) =>
+                            setEditing({ id: r.id, field: "rua_numero", value: editing.value, value2: e.target.value })
+                          }
+                          onKeyDown={onCellKeyDown}
+                          onBlur={saveEdit}
+                          className="w-28 rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
+                        />
+                      </div>
+                    ) : (
+                      <div className="truncate max-w-[280px]" title={`${withFallback(r.rua, "rua")}, ${withFallback(r.numero, "numero")}`}>
+                        {withFallback(r.rua, "rua")}, {withFallback(r.numero, "numero")}
+                      </div>
+                    )}
+                  </td>
+
+                  <td className="py-2 px-3" onDoubleClick={() => startEdit(r, "ponto_referencia")}>
+                    {editing && editing.id === r.id && editing.field === "ponto_referencia" ? (
                       <input
-                        placeholder="Nº"
-                        value={(editing as any).value2}
-                        onChange={(e) =>
-                          setEditing({ id: r.id, field: "rua_numero", value: editing.value, value2: e.target.value })
-                        }
-                        onKeyDown={onCellKeyDown}
+                        autoFocus
+                        value={editing.value}
+                        onChange={(e) => setEditing({ id: r.id, field: "ponto_referencia", value: e.target.value })}
                         onBlur={saveEdit}
-                        className="w-28 rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
+                        onKeyDown={onCellKeyDown}
+                        className="w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
                       />
-                    </div>
-                  ) : (
-                    <div className="truncate max-w-[280px]" title={`${withFallback(r.rua, "rua")}, ${withFallback(r.numero, "numero")}`}>
-                      {withFallback(r.rua, "rua")}, {withFallback(r.numero, "numero")}
-                    </div>
-                  )}
-                </td>
+                    ) : (
+                      <div className="truncate max-w-[260px]" title={withFallback(r.ponto_referencia, "ponto_referencia")}>
+                        {withFallback(r.ponto_referencia, "ponto_referencia")}
+                      </div>
+                    )}
+                  </td>
 
-                {/* Ponto ref. (editável) */}
-                <td className="py-2 px-3" onDoubleClick={() => startEdit(r, "ponto_referencia")}>
-                  {editing && editing.id === r.id && editing.field === "ponto_referencia" ? (
-                    <input
-                      autoFocus
-                      value={editing.value}
-                      onChange={(e) => setEditing({ id: r.id, field: "ponto_referencia", value: e.target.value })}
-                      onBlur={saveEdit}
-                      onKeyDown={onCellKeyDown}
-                      className="w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
-                    />
-                  ) : (
-                    <div className="truncate max-w-[260px]" title={withFallback(r.ponto_referencia, "ponto_referencia")}>
-                      {withFallback(r.ponto_referencia, "ponto_referencia")}
+                  <td className="py-2 px-3 whitespace-nowrap" onDoubleClick={() => startEdit(r, "telefone")}>
+                    {editing && editing.id === r.id && editing.field === "telefone" ? (
+                      <input
+                        autoFocus
+                        value={editing.value}
+                        onChange={(e) => setEditing({ id: r.id, field: "telefone", value: e.target.value })}
+                        onBlur={saveEdit}
+                        onKeyDown={onCellKeyDown}
+                        inputMode="tel"
+                        className="w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
+                      />
+                    ) : (
+                      fmtTel(r.telefone)
+                    )}
+                  </td>
+
+                  <td className="py-2 px-3">
+                    <div className="max-w-[240px]">
+                      <div className="truncate font-medium" title={withFallback(r.solicitante_nome, "solicitante")}>
+                        {withFallback(r.solicitante_nome, "solicitante")}
+                      </div>
+                      <div className="truncate text-xs text-slate-400" title={withFallback(r.solicitante_documento, "documento")}>
+                        {withFallback(r.solicitante_documento, "documento")}
+                      </div>
                     </div>
-                  )}
-                </td>
+                  </td>
 
-                {/* Telefone (editável) */}
-                <td className="py-2 px-3 whitespace-nowrap" onDoubleClick={() => startEdit(r, "telefone")}>
-                  {editing && editing.id === r.id && editing.field === "telefone" ? (
-                    <input
-                      autoFocus
-                      value={editing.value}
-                      onChange={(e) => setEditing({ id: r.id, field: "telefone", value: e.target.value })}
-                      onBlur={saveEdit}
-                      onKeyDown={onCellKeyDown}
-                      inputMode="tel"
-                      className="w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
-                    />
-                  ) : (
-                    fmtTel(r.telefone)
-                  )}
-                </td>
+                  <td className="py-2 px-3" title="Prioridade">
+                    {r.prioridade ? (
+                      <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-fuchsia-500/20 text-fuchsia-300 ring-1 ring-fuchsia-400/30 whitespace-nowrap">
+                        PRIORIDADE
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-slate-500/20 text-slate-300 ring-1 ring-slate-400/30 whitespace-nowrap">
+                        Normal
+                      </span>
+                    )}
+                  </td>
 
-                {/* Solicitante */}
-                <td className="py-2 px-3">
-                  <div className="max-w-[240px]">
-                    <div className="truncate font-medium" title={withFallback(r.solicitante_nome, "solicitante")}>
-                      {withFallback(r.solicitante_nome, "solicitante")}
-                    </div>
-                    <div className="truncate text-xs text-slate-400" title={withFallback(r.solicitante_documento, "documento")}>
-                      {withFallback(r.solicitante_documento, "documento")}
-                    </div>
-                  </div>
-                </td>
-
-                {/* Prioridade */}
-                <td
-                  className="py-2 px-3"
-                  onDoubleClick={() => onDblClickPrioridade(r)}
-                  title="Duplo clique para alternar (requer senha)"
-                >
-                  {r.prioridade ? (
-                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-fuchsia-500/20 text-fuchsia-300 ring-1 ring-fuchsia-400/30 whitespace-nowrap">
-                      PRIORIDADE
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-slate-500/20 text-slate-300 ring-1 ring-slate-400/30 whitespace-nowrap">
-                      Normal
-                    </span>
-                  )}
-                </td>
-
-                {/* Status / Ativar */}
-                <td className="py-2 px-3 text-center whitespace-nowrap">
-                  <div className="inline-flex items-center gap-2">
-                    <StatusBadge status={r.status} />
-                    {canActivate ? (
+                  <td className="py-2 px-3 text-center whitespace-nowrap">
+                    <div className="inline-flex items-center gap-2">
+                      <StatusBadge status={r.status} />
                       <button
                         onClick={() => onClickAtivar(r)}
                         className="px-3 py-1.5 text-xs rounded-lg bg-emerald-600/20 text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-600/30 whitespace-nowrap"
                       >
                         Ativar
                       </button>
-                    ) : (
+                    </div>
+                  </td>
+
+                  <td className="py-2 px-3 text-center">
+                    {r.pdf_ordem_path ? (
                       <button
-                        type="button"
-                        onClick={() => {
-                          setPermText("Apenas TERCEIRIZADA e ADM podem ativar papeletas.");
-                          setPermModalOpen(true);
-                        }}
-                        className="px-3 py-1.5 text-xs rounded-lg bg-emerald-600/10 text-emerald-300 ring-1 ring-emerald-400/20 cursor-not-allowed opacity-75 whitespace-nowrap"
-                        title="Sem permissão"
+                        onClick={() => openPrintWindow(r)}
+                        className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30 whitespace-nowrap"
                       >
-                        Ativar
+                        Imprimir
                       </button>
+                    ) : (
+                      <span className="text-slate-400 text-xs">{getEmptyLabel("pdf")}</span>
                     )}
-                  </div>
-                </td>
+                  </td>
 
-                {/* PDF -> Imprimir */}
-                <td className="py-2 px-3 text-center">
-                  {r.pdf_ordem_path ? (
+                  <td className="py-2 px-3 text-center whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
+
+                  {/* COLUNA: EDITAR */}
+                  <td className="py-2 px-3 text-center">
                     <button
-                      onClick={() => openPrintWindow(r)}
-                      className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30 whitespace-nowrap"
-                    >
-                      Imprimir
-                    </button>
-                  ) : (
-                    <span className="text-slate-400 text-xs">{getEmptyLabel("pdf")}</span>
-                  )}
-                </td>
-
-                {/* Criado em */}
-                <td className="py-2 px-3 text-center whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
-
-                {/* Ações -> Editar */}
-                <td className="py-2 px-3 text-center">
-                  {canEditRow(r) ? (
-                    <button
-                      onClick={() => onClickEditar(r)}
-                      className="px-3 py-1.5 text-xs rounded-lg bg-sky-600/20 text-sky-200 ring-1 ring-sky-400/40 hover:bg-sky-600/30 whitespace-nowrap"
+                      onClick={() => (canEdit ? openEditModal(r) : (setPermText("Você não pode editar essa papeleta. Apenas o criador (ou ADM) pode editar campos."), setPermModalOpen(true)))}
+                      className={`px-3 py-1.5 text-xs rounded-lg border whitespace-nowrap ${
+                        canEdit
+                          ? "bg-white/5 border-white/10 hover:bg-white/10"
+                          : "bg-white/5 border-white/10 opacity-50 cursor-not-allowed"
+                      }`}
                     >
                       Editar
                     </button>
-                  ) : (
-                    <button
-                      onClick={() => onClickEditar(r)}
-                      className="px-3 py-1.5 text-xs rounded-lg bg-sky-600/10 text-sky-300 ring-1 ring-sky-400/20 opacity-70 cursor-not-allowed whitespace-nowrap"
-                      title="Somente o criador da papeleta ou ADM podem editar"
-                    >
-                      Editar
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
+                  </td>
+                </tr>
+              );
+            })}
 
             {rows.length === 0 && (
               <tr>
@@ -923,100 +760,144 @@ export default function PendingReconnectionsTable() {
         </div>
       )}
 
-      {/* Modal de edição completa */}
-      {editModal.open && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
-          <div className="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-2xl">
-            <h3 className="text-lg font-semibold text-white">
-              Editar papeleta — Matrícula {editModal.matricula}
-            </h3>
-            <p className="text-slate-400 text-xs mt-1">
-              Somente quem criou a papeleta (ou ADM) pode salvar alterações.
+      {/* Modal confirmar ativação */}
+      {confirmOpen.open && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-sm">
+            <h3 className="text-lg font-semibold text-white mb-2">Ativar papeleta</h3>
+            <p className="text-slate-300 text-sm mb-4">Confirmar ativação da matrícula <b>{confirmOpen.matricula}</b>?</p>
+            <div className="mt-3 flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmOpen({ open: false })}
+                className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white text-sm"
+                disabled={!!confirmOpen.saving}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarAtivar}
+                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm disabled:opacity-60"
+                disabled={!!confirmOpen.saving}
+              >
+                {confirmOpen.saving ? "Ativando…" : "Ativar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal EDITAR (com troca de PDF) */}
+      {editModal.open && editModal.row && editModal.form && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-lg">
+            <h3 className="text-lg font-semibold text-white mb-2">Editar papeleta</h3>
+            <p className="text-slate-300 text-sm mb-4">
+              Matrícula <b>{editModal.row.matricula}</b>
             </p>
 
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm text-slate-300 mb-1">Solicitante (nome)</label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-sm text-slate-300">
+                Bairro
                 <input
-                  value={editModal.solicitante_nome}
-                  onChange={(e) => setEditModal((m) => ({ ...m, solicitante_nome: e.target.value.toUpperCase() }))}
-                  className="w-full rounded-lg bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-sky-400/40 text-white uppercase"
-                  placeholder="EX.: JOÃO DA SILVA"
+                  value={editModal.form.bairro}
+                  onChange={(e) => setEditModal((m) => m.open ? { ...m, form: { ...m.form!, bairro: e.target.value } } : m)}
+                  className="mt-1 w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
                 />
-              </div>
-              <div>
-                <label className="block text-sm text-slate-300 mb-1">Documento</label>
+              </label>
+
+              <label className="text-sm text-slate-300">
+                Telefone
                 <input
-                  value={editModal.solicitante_documento}
-                  onChange={(e) => setEditModal((m) => ({ ...m, solicitante_documento: e.target.value.toUpperCase() }))}
-                  className="w-full rounded-lg bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-sky-400/40 text-white uppercase"
-                  placeholder="CPF / RG / OUTRO"
+                  value={editModal.form.telefone}
+                  onChange={(e) => setEditModal((m) => m.open ? { ...m, form: { ...m.form!, telefone: e.target.value } } : m)}
+                  className="mt-1 w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
                 />
-              </div>
-              <div>
-                <label className="block text-sm text-slate-300 mb-1">Bairro</label>
+              </label>
+
+              <label className="text-sm text-slate-300 col-span-2">
+                Rua
                 <input
-                  value={editModal.bairro}
-                  onChange={(e) => setEditModal((m) => ({ ...m, bairro: e.target.value.toUpperCase() }))}
-                  className="w-full rounded-lg bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-sky-400/40 text-white uppercase"
-                  placeholder="EX.: CENTRO"
+                  value={editModal.form.rua}
+                  onChange={(e) => setEditModal((m) => m.open ? { ...m, form: { ...m.form!, rua: e.target.value } } : m)}
+                  className="mt-1 w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
                 />
-              </div>
-              <div>
-                <label className="block text-sm text-slate-300 mb-1">Rua</label>
+              </label>
+
+              <label className="text-sm text-slate-300">
+                Número
                 <input
-                  value={editModal.rua}
-                  onChange={(e) => setEditModal((m) => ({ ...m, rua: e.target.value.toUpperCase() }))}
-                  className="w-full rounded-lg bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-sky-400/40 text-white uppercase"
-                  placeholder="EX.: AV. BRASIL"
+                  value={editModal.form.numero}
+                  onChange={(e) => setEditModal((m) => m.open ? { ...m, form: { ...m.form!, numero: e.target.value } } : m)}
+                  className="mt-1 w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
                 />
-              </div>
-              <div>
-                <label className="block text-sm text-slate-300 mb-1">Número</label>
+              </label>
+
+              <label className="text-sm text-slate-300 col-span-2">
+                Ponto de referência
                 <input
-                  value={editModal.numero}
-                  onChange={(e) => setEditModal((m) => ({ ...m, numero: e.target.value.toUpperCase() }))}
-                  className="w-full rounded-lg bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-sky-400/40 text-white uppercase"
-                  placeholder="EX.: 123"
+                  value={editModal.form.ponto_referencia}
+                  onChange={(e) => setEditModal((m) =>
+                    m.open ? { ...m, form: { ...m.form!, ponto_referencia: e.target.value } } : m
+                  )}
+                  className="mt-1 w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
                 />
-              </div>
-              <div>
-                <label className="block text-sm text-slate-300 mb-1">Ponto de referência</label>
-                <input
-                  value={editModal.ponto_referencia}
-                  onChange={(e) => setEditModal((m) => ({ ...m, ponto_referencia: e.target.value.toUpperCase() }))}
-                  className="w-full rounded-lg bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-sky-400/40 text-white uppercase"
-                  placeholder="OPCIONAL"
-                />
-              </div>
-              <div className="md:col-span-2">
-                <label className="block text-sm text-slate-300 mb-1">Telefone</label>
-                <input
-                  value={editModal.telefone}
-                  onChange={(e) => setEditModal((m) => ({ ...m, telefone: e.target.value }))}
-                  className="w-full rounded-lg bg-slate-900/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-sky-400/40 text-white"
-                  placeholder="(00) 00000-0000"
-                />
+              </label>
+
+              {/* Seção de PDF */}
+              <div className="col-span-2 mt-2">
+                <div className="text-sm text-slate-300 mb-1">PDF da ordem</div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={onPickPdfClick}
+                    className="px-3 py-1.5 text-xs rounded-lg bg-indigo-600/90 text-white hover:bg-indigo-500"
+                  >
+                    {editModal.form.newPdfName ? "Trocar PDF" : (editModal.row.pdf_ordem_path ? "Trocar PDF" : "Enviar PDF")}
+                  </button>
+                  <span className="text-xs text-slate-400 truncate max-w-[260px]">
+                    {editModal.form.newPdfName
+                      ? editModal.form.newPdfName
+                      : (editModal.row.pdf_ordem_path || "Nenhum arquivo selecionado")}
+                  </span>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="application/pdf"
+                    className="hidden"
+                    onChange={onPdfFileChange}
+                  />
+                </div>
               </div>
             </div>
 
-            <div className="mt-6 flex justify-end gap-3">
+            <div className="mt-5 flex justify-end gap-3">
               <button
-                onClick={() => setEditModal((m) => ({ ...m, open: false }))}
-                className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200"
+                onClick={() => setEditModal({ open: false })}
+                className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white text-sm"
                 disabled={!!editModal.saving}
               >
                 Cancelar
               </button>
               <button
-                onClick={salvarEdicaoCompleta}
-                className="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white disabled:opacity-60"
+                onClick={salvarEditModal}
+                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm disabled:opacity-60"
                 disabled={!!editModal.saving}
               >
                 {editModal.saving ? "Salvando…" : "Salvar alterações"}
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Toast */}
+      {msg && (
+        <div
+          className={`fixed bottom-5 right-5 px-4 py-2 rounded-lg shadow-lg text-sm z-50 ${
+            msg.kind === "ok" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
+          }`}
+        >
+          {msg.text}
         </div>
       )}
     </div>

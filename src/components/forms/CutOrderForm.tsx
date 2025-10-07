@@ -4,6 +4,7 @@ import supabase from "../../lib/supabase";
 type Msg = { kind: "ok" | "err"; text: string } | null;
 
 const ALLOWED_ROLES = new Set(["ADM", "DIRETOR", "COORDENADOR", "OPERADOR"]);
+const NAO_CONSTA = "NÃO CONSTA";
 
 export default function CutOrderForm() {
   const [matricula, setMatricula] = React.useState("");
@@ -11,7 +12,7 @@ export default function CutOrderForm() {
   const [bairro, setBairro] = React.useState("");
   const [rua, setRua] = React.useState("");
   const [numero, setNumero] = React.useState("");
-  const [pontoRef, setPontoRef] = React.useState("");
+  const [pontoRef, setPontoRef] = React.useState<string>(""); // mantém vazio quando não tem no BD
 
   const [motivo, setMotivo] = React.useState<"faturas" | "agendamento" | "outros" | "">("");
   const [motivoOutros, setMotivoOutros] = React.useState("");
@@ -62,7 +63,7 @@ export default function CutOrderForm() {
           .from("app_users")
           .select("papel")
           .eq("id", user.id)
-          .maybeSingle(); // <<<<<< chave para não cair em erro quando não achar
+          .maybeSingle();
 
         if (e1) throw e1;
         if (byId?.papel) {
@@ -80,7 +81,6 @@ export default function CutOrderForm() {
 
         setUserRole((papel || "VISITANTE").toUpperCase());
       } catch {
-        // fallback seguro
         setUserRole("VISITANTE");
       }
     })();
@@ -93,7 +93,7 @@ export default function CutOrderForm() {
     setBairro("");
     setRua("");
     setNumero("");
-    setPontoRef("");
+    setPontoRef(""); // volta a vazio (render mostra "NÃO CONSTA")
     setMotivo("");
     setMotivoOutros("");
     setPdfOrdem(null);
@@ -114,10 +114,11 @@ export default function CutOrderForm() {
     return matricula;
   };
 
-  // Busca dados anteriores
+  // Busca dados anteriores (inclui ponto de referência; se não tiver, exibe "NÃO CONSTA" na UI)
   async function fetchMatriculaData(m: string) {
     if (!m) return;
 
+    // 1) tenta última ordem de corte
     let { data, error } = await supabase
       .from("ordens_corte")
       .select("bairro, rua, numero, ponto_referencia, motivo, motivo_outros")
@@ -130,12 +131,13 @@ export default function CutOrderForm() {
       setBairro(d?.bairro ?? "");
       setRua(d?.rua ?? "");
       setNumero(d?.numero ?? "");
-      setPontoRef(d?.ponto_referencia ?? "");
+      setPontoRef(d?.ponto_referencia ?? ""); // se vier vazio, UI mostrará "NÃO CONSTA"
       setMotivo(d?.motivo ?? "");
       setMotivoOutros(d?.motivo_outros ?? "");
       return;
     }
 
+    // 2) senão, tenta última ordem de religação
     let { data: dataRel, error: errorRel } = await supabase
       .from("ordens_religacao")
       .select("bairro, rua, numero, ponto_referencia")
@@ -148,10 +150,19 @@ export default function CutOrderForm() {
       setBairro(d?.bairro ?? "");
       setRua(d?.rua ?? "");
       setNumero(d?.numero ?? "");
-      setPontoRef(d?.ponto_referencia ?? "");
+      setPontoRef(d?.ponto_referencia ?? ""); // se não existir, mostra "NÃO CONSTA"
       setMotivo("");
       setMotivoOutros("");
+      return;
     }
+
+    // 3) nenhum histórico -> mantém "NÃO CONSTA" na UI (estado vazio)
+    setBairro("");
+    setRua("");
+    setNumero("");
+    setPontoRef("");
+    setMotivo("");
+    setMotivoOutros("");
   }
 
   // OS
@@ -168,7 +179,8 @@ export default function CutOrderForm() {
     if (!bairro.trim()) return "Informe o bairro.";
     if (!rua.trim()) return "Informe a rua.";
     if (!numero.trim()) return "Informe o número.";
-    if (!pontoRef.trim()) return "Informe o ponto de referência.";
+    // 🔄 ponto de referência agora é só do BD: se não tiver, segue com “NÃO CONSTA”
+    // if (!pontoRef.trim()) return "Informe o ponto de referência.";
     if (!motivo) return "Selecione o motivo do corte.";
     if (motivo === "outros" && !motivoOutros.trim()) return "Descreva o motivo em 'Outros'.";
     if (!pdfOrdem) return "É obrigatório anexar o PDF da ordem de corte.";
@@ -204,7 +216,6 @@ export default function CutOrderForm() {
       setSaving(true);
       setMsg(null);
 
-      // revalida permissão imediatamente antes de enviar
       if (!isAllowed) {
         setPermText(
           "Seu perfil não tem permissão para criar ordens de corte. Apenas ADM, DIRETOR, COORDENADOR e OPERADOR podem."
@@ -239,13 +250,13 @@ export default function CutOrderForm() {
         bairro: bairro.trim(),
         rua: rua.trim(),
         numero: numero.trim(),
-        ponto_referencia: pontoRef.trim(),
+        // se não houve ponto de referência no BD, grava NULL (UI mostra "NÃO CONSTA")
+        ponto_referencia: pontoRef.trim() ? pontoRef.trim() : null,
         motivo,
         motivo_outros: motivo === "outros" ? motivoOutros.trim() : null,
         status: "aguardando_corte",
         pdf_ordem_path: ordemPath,
-        corte_na_rua: corteNaRua, // grava aqui
-        // created_by: não precisa — default do banco usa auth.uid()
+        corte_na_rua: corteNaRua,
       });
 
       if (insErr) throw insErr;
@@ -350,14 +361,23 @@ export default function CutOrderForm() {
                   onChange={(e) => setNumero(e.target.value.toUpperCase())}
                 />
               </div>
+
+              {/* 🔒 Ponto de referência: somente-leitura, vindo do BD. Se vazio, mostrar "NÃO CONSTA" */}
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Ponto de referência *</label>
+                <label className="block text-sm text-slate-300 mb-1">
+                  Ponto de referência (auto) *
+                </label>
                 <input
                   className="w-full rounded-xl bg-slate-950/60 border border-white/10 px-3 py-2 outline-none focus:ring-2 ring-emerald-400/40 uppercase"
-                  placeholder="EX.: PRÓXIMO À PRAÇA…"
-                  value={pontoRef}
-                  onChange={(e) => setPontoRef(e.target.value.toUpperCase())}
+                  value={pontoRef ? pontoRef.toUpperCase() : NAO_CONSTA}
+                  readOnly
+                  aria-readonly="true"
+                  title="Campo preenchido automaticamente de acordo com a matrícula"
                 />
+                <p className="mt-1 text-xs text-slate-400">
+                  Campo preenchido automaticamente pelo histórico da matrícula. Se não houver, será
+                  registrado como não informado.
+                </p>
               </div>
             </div>
           </section>
@@ -478,7 +498,10 @@ export default function CutOrderForm() {
             <p className="text-slate-300 text-sm mt-2">{permText}</p>
             <div className="mt-5">
               <button
-                onClick={() => { clear(); setPermModalOpen(false); }}
+                onClick={() => {
+                  clear();
+                  setPermModalOpen(false);
+                }}
                 className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white text-sm"
               >
                 Entendi

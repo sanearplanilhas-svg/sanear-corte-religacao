@@ -78,7 +78,6 @@ export default function AllOrdersTable() {
       try {
         const { data: udata, error: uerr } = await supabase.auth.getUser();
         if (uerr) throw uerr;
-        // Narrowing seguro (evita TS2532)
         const user = (udata && "user" in udata ? (udata as any).user : undefined) as
           | { id: string }
           | undefined;
@@ -235,21 +234,21 @@ export default function AllOrdersTable() {
 
   const fmt = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR") : "—");
 
-  // Evita comentários/whitespace dentro do <colgroup> (elimina warnings do React)
+  // Larguras das colunas — mantidas; adiciona w-10 quando deleteMode
   const colWidths = React.useMemo(() => {
     const arr: string[] = [];
     if (deleteMode) arr.push("w-10");
     arr.push(
-      "w-28", // matrícula
-      "w-24", // OS
-      "w-40", // bairro
-      "w-[320px]", // rua e nº
-      "w-[300px]", // ponto ref
-      "w-40", // status
-      "w-28", // pdf
-      "w-40", // criado em
-      "w-40", // cortada em
-      "w-36" // corte na rua
+      "w-32",     // matrícula (ajuste para casar com layout base)
+      "w-24",     // OS
+      "w-40",     // bairro
+      "w-[320px]",// rua e nº
+      "w-[300px]",// ponto ref
+      "w-40",     // status
+      "w-28",     // pdf
+      "w-40",     // criado em
+      "w-40",     // cortada em
+      "w-36"      // corte na rua
     );
     return arr;
   }, [deleteMode]);
@@ -258,6 +257,15 @@ export default function AllOrdersTable() {
     () => colWidths.map((cls, i) => <col key={i} className={cls} />),
     [colWidths]
   );
+
+  // classes sticky iguais às do layout base
+  const thMatriculaSticky =
+    `py-2 px-3 font-medium text-center sticky z-30 bg-slate-900/95 backdrop-blur border-r border-white/10 ` +
+    (deleteMode ? "left-10" : "left-0");
+
+  const tdMatriculaSticky =
+    `py-2 px-3 font-mono whitespace-nowrap text-center sticky z-10 bg-slate-950/80 backdrop-blur border-r border-white/10 ` +
+    (deleteMode ? "left-10" : "left-0");
 
   return (
     <div className="rounded-2xl bg-slate-900/50 ring-1 ring-white/10 p-4">
@@ -321,14 +329,20 @@ export default function AllOrdersTable() {
         </div>
       )}
 
-      <div className="rounded-xl overflow-x-auto ring-1 ring-white/10">
-        <table className="w-full text-sm table-auto">
+      {/* >>> Layout idêntico ao AllReconnectionsTable (apenas aparência) */}
+      <div className="rounded-xl ring-1 ring-white/10 max-h-[60vh] overflow-x-auto overflow-y-auto">
+        <table className="min-w-[1280px] w-max text-sm table-auto">
           <colgroup>{colEls}</colgroup>
 
-          <thead className="bg-white/5 text-slate-300">
+          <thead className="sticky top-0 z-20 bg-slate-900/95 text-slate-100 backdrop-blur supports-backdrop-blur:bg-slate-900/80 border-white/10">
             <tr>
-              {deleteMode && <th className="py-2 px-3" />}
-              <th className="text-left font-medium py-2 px-3">Matrícula</th>
+              {deleteMode && (
+                <th
+                  className="py-2 px-3 sticky left-0 z-40 bg-slate-900/95 backdrop-blur border-r border-white/10"
+                  aria-label="Selecionar"
+                />
+              )}
+              <th className={thMatriculaSticky}>Matrícula</th>
               <th className="text-left font-medium py-2 px-3">OS</th>
               <th className="text-left font-medium py-2 px-3">Bairro</th>
               <th className="text-left font-medium py-2 px-3">Rua e nº</th>
@@ -347,7 +361,7 @@ export default function AllOrdersTable() {
               return (
                 <tr key={r.id} className="bg-slate-950/40 align-middle">
                   {deleteMode && (
-                    <td className="py-2 px-3 text-center">
+                    <td className="py-2 px-3 text-center sticky left-0 z-20 bg-slate-950/90 backdrop-blur border-r border-white/10">
                       <input
                         type="checkbox"
                         checked={selectedIds.has(r.id)}
@@ -357,7 +371,8 @@ export default function AllOrdersTable() {
                     </td>
                   )}
 
-                  <td className="py-2 px-3 font-mono whitespace-nowrap">{r.matricula}</td>
+                  {/* Matrícula sticky */}
+                  <td className={tdMatriculaSticky}>{r.matricula}</td>
                   <td className="py-2 px-3 whitespace-nowrap">{r.os || "-"}</td>
 
                   <td className="py-2 px-3">
@@ -400,7 +415,7 @@ export default function AllOrdersTable() {
         </table>
       </div>
 
-      {/* Modal de permissão negada */}
+      {/* Permissão negada */}
       {permModalOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-lg text-center">

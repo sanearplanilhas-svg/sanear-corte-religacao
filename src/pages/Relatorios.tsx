@@ -16,29 +16,29 @@ type Campo = {
 
 /** ===== Campos disponíveis ===== */
 const CAMPOS_RELI: Campo[] = [
-  { id: "created_at", label: "Criado em", db: "created_at", width: "w-44" },
-  { id: "ativa_em", label: "Ativa em", db: "ativa_em", width: "w-44" },
-  { id: "matricula", label: "Matrícula", db: "matricula", width: "w-28" },
+  { id: "created_at", label: "Criado em", db: "created_at", width: "w-44", align: "center" },
+  { id: "ativa_em", label: "Ativa em", db: "ativa_em", width: "w-44", align: "center" },
+  { id: "matricula", label: "Matrícula", db: "matricula", width: "w-28", align: "center" },
   { id: "bairro", label: "Bairro", db: "bairro", width: "w-48" },
   { id: "rua", label: "Rua", db: "rua", width: "w-64" },
   { id: "numero", label: "Nº", db: "numero", width: "w-20", align: "center" },
   { id: "ponto_referencia", label: "Ponto ref.", db: "ponto_referencia", width: "w-64" },
-  { id: "telefone", label: "Telefone", db: "telefone", width: "w-40" },
+  { id: "telefone", label: "Telefone", db: "telefone", width: "w-40", align: "center" },
   { id: "prioridade", label: "Prioridade", db: "prioridade", width: "w-28", align: "center" },
   { id: "status", label: "Status", db: "status", width: "w-40", align: "center" },
   { id: "observacao", label: "Observação", db: "observacao", width: "w-[28rem]" },
   { id: "solicitante_nome", label: "Solicitante — Nome", db: "solicitante_nome", width: "w-64" },
-  { id: "solicitante_doc", label: "Solicitante — Doc.", db: "solicitante_doc", width: "w-56" },
+  { id: "solicitante_doc", label: "Solicitante — Doc.", db: "solicitante_doc", width: "w-56", align: "center" },
 ];
 
 const CAMPOS_CORTE: Campo[] = [
-  { id: "created_at", label: "Criado em", db: "created_at", width: "w-44" },
-  { id: "matricula", label: "Matrícula", db: "matricula", width: "w-28" },
+  { id: "created_at", label: "Criado em", db: "created_at", width: "w-44", align: "center" },
+  { id: "matricula", label: "Matrícula", db: "matricula", width: "w-28", align: "center" },
   { id: "bairro", label: "Bairro", db: "bairro", width: "w-48" },
   { id: "rua", label: "Rua", db: "rua", width: "w-64" },
   { id: "numero", label: "Nº", db: "numero", width: "w-20", align: "center" },
   { id: "ponto_referencia", label: "Ponto ref.", db: "ponto_referencia", width: "w-64" },
-  { id: "telefone", label: "Telefone", db: "telefone", width: "w-40" },
+  { id: "telefone", label: "Telefone", db: "telefone", width: "w-40", align: "center" },
   { id: "status", label: "Status", db: "status", width: "w-40", align: "center" },
   { id: "observacao", label: "Observação", db: "observacao", width: "w-[28rem]" },
 ];
@@ -213,6 +213,40 @@ export default function ReportsPage() {
     }
   }
 
+  /** ===== helpers PDF: quebra de texto, grade e alinhamento ===== */
+  function wrapTextByWidth(
+    font: any,
+    text: string,
+    fontSize: number,
+    maxWidth: number
+  ): string[] {
+    const words = text.split(/\s+/g);
+    const lines: string[] = [];
+    let current = "";
+
+    for (const w of words) {
+      const candidate = current ? current + " " + w : w;
+      const width = font.widthOfTextAtSize(candidate, fontSize);
+      if (width <= maxWidth) {
+        current = candidate;
+      } else {
+        if (current) lines.push(current);
+        // se a palavra sozinha for maior que a largura, quebra “forçada”
+        let chunk = w;
+        while (font.widthOfTextAtSize(chunk, fontSize) > maxWidth && chunk.length > 1) {
+          // tenta diminuir até caber
+          let cut = chunk.length - 1;
+          while (cut > 1 && font.widthOfTextAtSize(chunk.slice(0, cut) + "-", fontSize) > maxWidth) cut--;
+          lines.push(chunk.slice(0, cut) + "-");
+          chunk = chunk.slice(cut);
+        }
+        current = chunk;
+      }
+    }
+    if (current) lines.push(current);
+    return lines;
+  }
+
   /** ===== Imprimir PDF (usa /icons/folha-timbrada.pdf) ===== */
   async function handlePrint() {
     if (selectedCampos.length === 0) {
@@ -256,8 +290,9 @@ export default function ReportsPage() {
         );
       }
 
-      // 2) fonte
+      // 2) fontes
       const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
       // 3) títulos
       const title = base === "religacao" ? "RELATÓRIO DE RELIGAÇÕES" : "RELATÓRIO DE CORTES";
@@ -270,124 +305,221 @@ export default function ReportsPage() {
       const pageMarginX = 36;
       const pageMarginTop = 140; // abaixo do timbre do template
       const pageMarginBottom = 40;
-      const rowHeight = 16;
-      const headerGap = 12;
+
+      const headerHeight = 18;
+      const rowLineHeight = 12; // altura de uma linha de texto
+      const cellPadX = 4;
+      const cellPadY = 3;
+
       const fontSizeTitle = 14;
       const fontSizeSub = 10;
-      const fontSizeHeader = 9;
+      const fontSizeHeader = 9.5;
       const fontSizeBody = 9;
       const textColor = rgb(0, 0, 0);
+      const gridColor = rgb(0.8, 0.82, 0.86);
+      const headerBg = rgb(0.93, 0.95, 0.98);
 
-      // 6) títulos
+      // 6) títulos (centralizados horizontalmente na área útil)
+      const usableWidth = page.getWidth() - pageMarginX * 2;
+      const titleW = fontBold.widthOfTextAtSize(UPPER(title), fontSizeTitle);
+      const subtW = font.widthOfTextAtSize(UPPER(subt), fontSizeSub);
       page.drawText(UPPER(title), {
-        x: pageMarginX,
+        x: pageMarginX + (usableWidth - titleW) / 2,
         y: page.getHeight() - pageMarginTop,
         size: fontSizeTitle,
-        font,
+        font: fontBold,
         color: textColor,
       });
       page.drawText(UPPER(subt), {
-        x: pageMarginX,
+        x: pageMarginX + (usableWidth - subtW) / 2,
         y: page.getHeight() - pageMarginTop - 18,
         size: fontSizeSub,
         font,
         color: textColor,
       });
 
-      // 7) colunas
-      const colWidths: number[] = selectedCampos.map((c) => widthToPx(c.width, 120));
-      const startX = pageMarginX;
-      let y = page.getHeight() - pageMarginTop - 40;
+      // 7) calcular larguras escaladas para caber na página
+      const naturalWidths = selectedCampos.map((c) => widthToPx(c.width, 120));
+      const sumNatural = naturalWidths.reduce((a, b) => a + b, 0);
+      const scale = sumNatural > 0 ? Math.min(1, usableWidth / sumNatural) : 1;
+      const colWidths = naturalWidths.map((w) => Math.floor(w * scale));
 
-      // header da tabela
-      let x = startX;
-      selectedCampos.forEach((c, idx) => {
-        const cw = colWidths[idx] ?? 120;
-        page.drawText(UPPER(c.label), {
-          x,
-          y,
-          size: fontSizeHeader,
+      const startX = pageMarginX;
+      let cursorY = page.getHeight() - pageMarginTop - 40;
+
+      function drawTableHeader(currentPage: any) {
+        // fundo do header
+        let colX = startX;
+        currentPage.drawRectangle({
+          x: startX,
+          y: cursorY - headerHeight + 2,
+          width: colWidths.reduce((a, b) => a + b, 0),
+          height: headerHeight,
+          color: headerBg,
+          opacity: 1,
+        });
+
+        // textos do header
+        selectedCampos.forEach((c, idx) => {
+          const cw = colWidths[idx] ?? 120;
+          const text = UPPER(c.label);
+          const tw = fontBold.widthOfTextAtSize(text, fontSizeHeader);
+          let dx = colX + cellPadX;
+          if (c.align === "center" || !c.align) {
+            dx = colX + Math.max(cellPadX, (cw - tw) / 2);
+          } else if (c.align === "right") {
+            dx = colX + Math.max(cellPadX, cw - cellPadX - tw);
+          }
+          currentPage.drawText(text, {
+            x: dx,
+            y: cursorY - headerHeight + 5,
+            size: fontSizeHeader,
+            font: fontBold,
+            color: textColor,
+          });
+          // linhas verticais
+          currentPage.drawLine({
+            start: { x: colX, y: cursorY - headerHeight + 2 },
+            end: { x: colX, y: cursorY - headerHeight + 2 - 6 }, // pequeno traço
+            color: gridColor,
+            thickness: 0.5,
+          });
+          colX += cw;
+        });
+        // borda embaixo do header
+        currentPage.drawLine({
+          start: { x: startX, y: cursorY - headerHeight + 2 },
+          end: { x: startX + colWidths.reduce((a, b) => a + b, 0), y: cursorY - headerHeight + 2 },
+          color: gridColor,
+          thickness: 0.8,
+        });
+
+        cursorY -= headerHeight + 4;
+      }
+
+      function newPageWithHeader() {
+        page = pdfDoc.addPage();
+        // títulos novamente
+        page.drawText(UPPER(title), {
+          x: pageMarginX + (usableWidth - titleW) / 2,
+          y: page.getHeight() - pageMarginTop,
+          size: fontSizeTitle,
+          font: fontBold,
+          color: textColor,
+        });
+        page.drawText(UPPER(subt), {
+          x: pageMarginX + (usableWidth - subtW) / 2,
+          y: page.getHeight() - pageMarginTop - 18,
+          size: fontSizeSub,
           font,
           color: textColor,
         });
-        x += cw;
-      });
-      y -= headerGap;
+        cursorY = page.getHeight() - pageMarginTop - 40;
+        drawTableHeader(page);
+      }
 
-      const maxY = pageMarginBottom;
-      const drawCell = (
-        txt: string,
-        xx: number,
-        yy: number,
-        w: number,
-        align?: "left" | "center" | "right"
-      ) => {
-        const text = UPPER(txt);
-        let ddx = xx;
-        if (align === "center") {
-          const tw = font.widthOfTextAtSize(text, fontSizeBody);
-          ddx = xx + Math.max(0, (w - tw) / 2);
-        } else if (align === "right") {
-          const tw = font.widthOfTextAtSize(text, fontSizeBody);
-          ddx = xx + Math.max(0, w - tw);
-        }
-        page.drawText(text, { x: ddx, y: yy, size: fontSizeBody, font, color: textColor });
-      };
+      // header inicial
+      drawTableHeader(page);
 
-      // linhas
+      const minY = pageMarginBottom;
+
+      // desenha linhas com quebra de texto e grade
       for (const r of rows) {
-        if (y - rowHeight < maxY) {
-          page = pdfDoc.addPage();
-          // cabeçalho em cada página
-          page.drawText(UPPER(title), {
-            x: pageMarginX,
-            y: page.getHeight() - pageMarginTop,
-            size: fontSizeTitle,
-            font,
-            color: textColor,
-          });
-          page.drawText(UPPER(subt), {
-            x: pageMarginX,
-            y: page.getHeight() - pageMarginTop - 18,
-            size: fontSizeSub,
-            font,
-            color: textColor,
-          });
-          y = page.getHeight() - pageMarginTop - 40;
+        // 1) para cada coluna, quebrar texto e descobrir altura necessária
+        const linesPerCell: string[][] = [];
+        let maxLines = 1;
 
-          // header da tabela
-          let hx = startX;
-          selectedCampos.forEach((c, idx) => {
-            const cw = colWidths[idx] ?? 120;
-            page.drawText(UPPER(c.label), {
-              x: hx,
-              y,
-              size: fontSizeHeader,
-              font,
-              color: textColor,
-            });
-            hx += cw;
-          });
-          y -= headerGap;
-        }
-
-        x = startX;
         selectedCampos.forEach((c, idx) => {
-          const cw = colWidths[idx] ?? 120;
+          const cw = (colWidths[idx] ?? 120) - cellPadX * 2;
           const raw = (r as any)[c.db];
-          const val =
+          const value =
             raw == null
               ? "—"
               : c.db.endsWith("_at")
               ? new Date(raw).toLocaleString("pt-BR")
               : String(raw);
-          drawCell(val, x, y, cw, c.align);
-          x += cw;
+
+          const wrapped = wrapTextByWidth(font, UPPER(value), fontSizeBody, Math.max(20, cw));
+          linesPerCell.push(wrapped);
+          if (wrapped.length > maxLines) maxLines = wrapped.length;
         });
-        y -= rowHeight;
+
+        const rowHeight = Math.max(rowLineHeight * maxLines + cellPadY * 2, rowLineHeight + cellPadY * 2);
+
+        // 2) quebra de página se necessário
+        if (cursorY - rowHeight < minY) {
+          newPageWithHeader();
+        }
+
+        // 3) fundo e grade horizontal da linha
+        page.drawLine({
+          start: { x: startX, y: cursorY },
+          end: { x: startX + colWidths.reduce((a, b) => a + b, 0), y: cursorY },
+          color: gridColor,
+          thickness: 0.5,
+        });
+
+        // 4) desenhar cada célula
+        let colX = startX;
+        selectedCampos.forEach((c, idx) => {
+          const cw = colWidths[idx] ?? 120;
+          // borda vertical da célula
+          page.drawLine({
+            start: { x: colX, y: cursorY },
+            end: { x: colX, y: cursorY - rowHeight },
+            color: gridColor,
+            thickness: 0.5,
+          });
+
+          const contentLines = linesPerCell[idx];
+          const contentWidth = cw - cellPadX * 2;
+
+          // alinhar horizontalmente cada linha
+          let textY = cursorY - cellPadY - rowLineHeight; // primeira linha
+          contentLines.forEach((ln) => {
+            const tw = font.widthOfTextAtSize(ln, fontSizeBody);
+            let dx = colX + cellPadX;
+            const align: "left" | "center" | "right" = c.align || "center"; // default centralizado
+            if (align === "center") {
+              dx = colX + Math.max(cellPadX, (cw - tw) / 2);
+            } else if (align === "right") {
+              dx = colX + Math.max(cellPadX, cw - cellPadX - tw);
+            }
+            page.drawText(ln, {
+              x: dx,
+              y: textY,
+              size: fontSizeBody,
+              font,
+              color: textColor,
+              maxWidth: contentWidth,
+            });
+            textY -= rowLineHeight;
+          });
+
+          colX += cw;
+        });
+
+        // borda final direita da linha
+        page.drawLine({
+          start: { x: startX + colWidths.reduce((a, b) => a + b, 0), y: cursorY },
+          end: { x: startX + colWidths.reduce((a, b) => a + b, 0), y: cursorY - rowHeight },
+          color: gridColor,
+          thickness: 0.5,
+        });
+
+        // 5) avança cursor
+        cursorY -= rowHeight;
       }
 
-      // 8) salva e IMPRIME (sem download)
+      // linha inferior da tabela
+      page.drawLine({
+        start: { x: startX, y: cursorY },
+        end: { x: startX + colWidths.reduce((a, b) => a + b, 0), y: cursorY },
+        color: gridColor,
+        thickness: 0.8,
+      });
+
+      // 9) salva e IMPRIME (sem download)
       const bytes = await pdfDoc.save(); // Uint8Array
       const ab =
         bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
@@ -560,7 +692,7 @@ export default function ReportsPage() {
                   {selectedCampos.map((c) => (
                     <th
                       key={c.id}
-                      className={`text-left font-medium py-2 px-3 ${c.align === "center" ? "text-center" : ""}`}
+                      className={`font-medium py-2 px-3 ${c.align === "center" ? "text-center" : c.align === "right" ? "text-right" : "text-left"}`}
                     >
                       {c.label}
                     </th>
@@ -588,7 +720,7 @@ export default function ReportsPage() {
                         return (
                           <td
                             key={c.id}
-                            className={`py-2 px-3 ${c.align === "center" ? "text-center" : ""}`}
+                            className={`py-2 px-3 ${c.align === "center" ? "text-center" : c.align === "right" ? "text-right" : "text-left"}`}
                             title={val}
                           >
                             {val}
