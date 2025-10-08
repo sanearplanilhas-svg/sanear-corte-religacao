@@ -3,150 +3,116 @@ import * as React from "react";
 import supabase from "../../lib/supabase";
 import ListFilterBar, { ListFilter } from "../../components/filters/ListFilterBar";
 
-type CorteRow = {
+type CutPendRow = {
   id: string;
+  os: string | null;
   matricula: string;
   bairro: string;
   rua: string;
   numero: string;
   ponto_referencia: string | null;
   status: string;
-  pdf_ordem_path: string | null;
+  pdf_path: string | null;
+  pdf_ordem_path?: string | null;
   created_at: string;
   corte_na_rua: boolean | null;
-  created_by?: string | null; // <- para sabermos quem criou
+  cortada_em: string | null;
 };
 
-const fmtDateTime = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR") : "—");
-const ALLOWED_CUT = new Set(["ADM", "TERCEIRIZADA"]);
+const norm = (s?: string | null) =>
+  (s ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
 function StatusBadge({ status }: { status: string }) {
-  const s = (status || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  if (s === "aguardando_corte" || s.includes("aguardando corte")) {
+  const s = norm(status);
+  if (s.includes("cortad"))
     return (
-      <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-amber-500/20 text-amber-300 ring-1 ring-amber-400/30 whitespace-nowrap">
+      <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-rose-600/20 text-rose-300 ring-rose-400/30">
+        Cortada
+      </span>
+    );
+  if (s === "aguardando corte" || s === "aguardando_corte" || (s.includes("aguard") && s.includes("corte")))
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-amber-500/20 text-amber-300 ring-amber-400/30">
         Aguardando Corte
       </span>
     );
-  }
   return (
-    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-slate-500/20 text-slate-300 ring-1 ring-slate-400/30 whitespace-nowrap">
-      {status || "—"}
+    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-slate-500/20 text-slate-300 ring-slate-400/30">
+      {status}
     </span>
   );
 }
 
+const ALLOWED_MARK = new Set(["ADM", "TERCEIRIZADA"]);
+const ALLOWED_EDIT_ROLE = new Set(["ADM"]);
+
 export default function PendingCutsTable() {
-  const [rows, setRows] = React.useState<CorteRow[]>([]);
+  const [rows, setRows] = React.useState<CutPendRow[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [msg, setMsg] = React.useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   const [filter, setFilter] = React.useState<ListFilter>({ q: "", startDate: null, endDate: null });
 
-  // papel do usuário + modal de permissão
-  const [userRole, setUserRole] = React.useState<string>("VISITANTE");
+  // sessão/role para marcar e editar
   const [userId, setUserId] = React.useState<string | null>(null);
-  const canCut = React.useMemo(() => ALLOWED_CUT.has((userRole || "VISITANTE").toUpperCase()), [userRole]);
-
-  const [permModalOpen, setPermModalOpen] = React.useState(false);
-  const [permText, setPermText] = React.useState("Apenas TERCEIRIZADA e ADM podem marcar como CORTADA.");
-
-  // modal de confirmação de corte
-  const [confirmOpen, setConfirmOpen] = React.useState<{ open: boolean; id?: string; matricula?: string; saving?: boolean }>({
-    open: false,
-  });
-
-  // ======= MODAL EDITAR =======
-  const [editModal, setEditModal] = React.useState<{
-    open: boolean;
-    saving?: boolean;
-    row?: CorteRow;
-    form?: {
-      bairro: string;
-      rua: string;
-      numero: string;
-      ponto_referencia: string;
-      corte_na_rua: boolean | null;
-    };
-    file?: File | null; // novo PDF opcional
-  }>({ open: false });
-
-  const canEditRow = React.useCallback(
-    (row: CorteRow) => {
-      if ((userRole || "").toUpperCase() === "ADM") return true;
-      return (row.created_by || null) === (userId || null);
-    },
-    [userRole, userId]
-  );
+  const [userRole, setUserRole] = React.useState<string>("VISITANTE");
+  const canMark = React.useMemo(() => ALLOWED_MARK.has((userRole || "VISITANTE").toUpperCase()), [userRole]);
+  const [permOpen, setPermOpen] = React.useState(false);
 
   React.useEffect(() => {
     (async () => {
       try {
-        const { data: udata, error: uerr } = await supabase.auth.getUser();
-        if (uerr) throw uerr;
-        const user = (udata && "user" in udata ? (udata as any).user : undefined) as { id: string } | undefined;
-        if (!user) {
-          setUserRole("VISITANTE");
-          setUserId(null);
-          return;
-        }
-        setUserId(user.id);
-        const { data, error } = await supabase.from("app_users").select("papel").eq("id", user.id).single();
-        if (error) throw error;
-        setUserRole((data?.papel || "VISITANTE").toUpperCase());
+        const { data } = await supabase.auth.getUser();
+        const uid = data?.user?.id ?? null;
+        setUserId(uid);
+        if (!uid) return setUserRole("VISITANTE");
+        const { data: row } = await supabase.from("app_users").select("papel").eq("id", uid).maybeSingle();
+        setUserRole((row?.papel || "VISITANTE").toUpperCase());
       } catch {
         setUserRole("VISITANTE");
-        setUserId(null);
       }
     })();
   }, []);
 
-  function buildQuery() {
-    let query = supabase
-      .from("ordens_corte")
-      .select(
-        [
-          "id",
-          "matricula",
-          "bairro",
-          "rua",
-          "numero",
-          "ponto_referencia",
-          "status",
-          "pdf_ordem_path",
-          "created_at",
-          "corte_na_rua",
-          "created_by",
-        ].join(", ")
-      )
-      .or(["status.eq.aguardando_corte", "status.ilike.%aguardando corte%"].join(","))
-      .order("created_at", { ascending: false });
-
-    if (filter.startDate) query = query.gte("created_at", `${filter.startDate}T00:00:00`);
-    if (filter.endDate) query = query.lte("created_at", `${filter.endDate}T23:59:59`);
-
-    if (filter.q?.trim()) {
-      const q = filter.q.trim();
-      query = query.or(`matricula.ilike.%${q}%,bairro.ilike.%${q}%,rua.ilike.%${q}%`);
-    }
-
-    return query;
-  }
-
+  // ------- carregar -------
   async function load() {
+    setLoading(true);
     try {
-      setLoading(true);
-      const { data, error } = await buildQuery();
+      let q = supabase
+        .from("ordens_corte")
+        .select(
+          "id, os, matricula, bairro, rua, numero, ponto_referencia, status, pdf_path, pdf_ordem_path, created_at, corte_na_rua, cortada_em"
+        )
+        // pega “aguardando corte” em snake_case ou texto livre
+        .or("status.eq.aguardando_corte,status.ilike.%aguard%corte%");
+
+      if ((filter.q || "").trim() !== "") {
+        const s = filter.q!.trim();
+        q = q.or(`matricula.ilike.%${s}%,bairro.ilike.%${s}%,rua.ilike.%${s}%,os.ilike.%${s}%`);
+      }
+
+      // filtro por data de CRIAÇÃO
+      if (filter.startDate) q = q.gte("created_at", `${filter.startDate}T00:00:00`);
+      if (filter.endDate) q = q.lte("created_at", `${filter.endDate}T23:59:59`);
+
+      q = q.order("created_at", { ascending: false });
+
+      const { data, error } = await q;
       if (error) throw error;
-      setRows(((data ?? []) as unknown) as CorteRow[]);
+      setRows(((data || []) as unknown) as CutPendRow[]);
     } catch (e: any) {
-      setMsg({ kind: "err", text: e?.message ?? "Falha ao carregar." });
+      setMsg({ kind: "err", text: e?.message || "Falha ao carregar." });
       setTimeout(() => setMsg(null), 2200);
     } finally {
       setLoading(false);
     }
   }
-
   React.useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -156,168 +122,166 @@ export default function PendingCutsTable() {
     setFilter({ q: "", startDate: null, endDate: null });
   }
 
-  // clique no botão "Cortar" abre o modal de confirmação
-  function onClickCortar(row: CorteRow) {
-    if (!canCut) {
-      setPermText("Apenas TERCEIRIZADA e ADM podem marcar como CORTADA.");
-      setPermModalOpen(true);
-      return;
-    }
-    setConfirmOpen({ open: true, id: row.id, matricula: row.matricula, saving: false });
+  const fmt = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR") : "—");
+
+  function renderCorteNaRua(val: boolean | null) {
+    if (val === true)
+      return (
+        <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-emerald-600/20 text-emerald-200 ring-emerald-400/40">
+          SIM
+        </span>
+      );
+    if (val === false)
+      return (
+        <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-rose-600/20 text-rose-200 ring-rose-400/30">
+          NÃO
+        </span>
+      );
+    return "—";
   }
 
-  // confirmar no modal => faz o update
-  async function confirmarCorte() {
-    if (!confirmOpen.open || !confirmOpen.id) return;
-    if (!canCut) {
-      setPermText("Apenas TERCEIRIZADA e ADM podem marcar como CORTADA.");
-      setPermModalOpen(true);
-      setConfirmOpen({ open: false });
+  // ------- helpers de permissão de edição -------
+  function getRowCreatorId(r: CutPendRow): string | null {
+    const anyRow = r as any;
+    return anyRow?.created_by ?? anyRow?.id_usuario ?? anyRow?.user_id ?? anyRow?.uid ?? null;
+  }
+  function canEditRow(r: CutPendRow): boolean {
+    if (ALLOWED_EDIT_ROLE.has((userRole || "").toUpperCase())) return true;
+    const creator = getRowCreatorId(r);
+    return !!userId && !!creator && userId === creator;
+  }
+
+  // ------- marcar cortada -------
+  const [confirm, setConfirm] = React.useState<{ open: boolean; id?: string; matricula?: string; saving?: boolean }>({
+    open: false,
+  });
+
+  function askMarkCortada(row: CutPendRow) {
+    if (!canMark) {
+      setPermOpen(true);
       return;
     }
+    setConfirm({ open: true, id: row.id, matricula: row.matricula, saving: false });
+  }
 
+  async function doMarkCortada() {
+    if (!confirm.id) return;
     try {
-      setConfirmOpen((m) => ({ ...m, saving: true }));
-
-      const { data, error } = await supabase
-        .from("ordens_corte")
-        .update({ status: "cortada" })
-        .eq("id", confirmOpen.id)
-        .select("id,status,cortada_em")
-        .single();
-
-      if (error) {
-        if (/Impedido|insufficient_privilege|permission|RLS|row-level|policy|denied/i.test(error.message)) {
-          setPermText("A operação foi bloqueada pelas regras de segurança.");
-          setPermModalOpen(true);
-          setConfirmOpen({ open: false });
-          return;
-        }
-        setMsg({ kind: "err", text: `Falha ao cortar: ${error.message}` });
-        setTimeout(() => setMsg(null), 2200);
-        setConfirmOpen({ open: false });
-        return;
-      }
-
+      setConfirm((c) => ({ ...c, saving: true }));
+      const now = new Date().toISOString();
+      const { error } = await supabase.from("ordens_corte").update({ status: "cortada", cortada_em: now }).eq("id", confirm.id);
+      if (error) throw error;
       await load();
-      setMsg({
-        kind: "ok",
-        text: `Papeleta CORTADA. ${
-          (data as any)?.cortada_em ? `(${new Date((data as any).cortada_em).toLocaleString("pt-BR")})` : ""
-        }`,
-      });
-      setTimeout(() => setMsg(null), 1800);
-      setConfirmOpen({ open: false });
+      setMsg({ kind: "ok", text: "OS marcada como cortada." });
+      setTimeout(() => setMsg(null), 1600);
     } catch (e: any) {
-      setMsg({ kind: "err", text: e?.message ?? "Falha ao cortar." });
+      setMsg({ kind: "err", text: e?.message || "Não foi possível marcar como cortada." });
       setTimeout(() => setMsg(null), 2200);
-      setConfirmOpen({ open: false });
+    } finally {
+      setConfirm({ open: false });
     }
   }
 
-  // ===== EDITAR =====
-  function openEditModal(row: CorteRow) {
+  // ------- imprimir (coluna própria) -------
+  function renderPdfCell(row: CutPendRow) {
+    const path = row.pdf_path ?? row.pdf_ordem_path ?? null;
+    if (!path) return <span className="text-slate-400 text-xs">PDF indisponível</span>;
+    const { data } = supabase.storage.from("ordens-pdfs").getPublicUrl(path);
+    const url = data?.publicUrl;
+    if (!url) return <span className="text-slate-400 text-xs">PDF indisponível</span>;
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30 whitespace-nowrap"
+      >
+        Imprimir
+      </a>
+    );
+  }
+
+  // ------- EDIT MODAL (ordens_corte) -------
+  const [edit, setEdit] = React.useState<{
+    open: boolean;
+    saving: boolean;
+    row?: CutPendRow;
+    form: {
+      os: string;
+      matricula: string;
+      bairro: string;
+      rua: string;
+      numero: string;
+      ponto_referencia: string;
+      corte_na_rua: "true" | "false" | "null";
+    };
+  }>({
+    open: false,
+    saving: false,
+    form: { os: "", matricula: "", bairro: "", rua: "", numero: "", ponto_referencia: "", corte_na_rua: "null" },
+  });
+
+  function openEdit(row: CutPendRow) {
     if (!canEditRow(row)) {
-      setPermText("Você não pode editar essa papeleta. Apenas o criador (ou ADM) pode editar campos.");
-      setPermModalOpen(true);
+      setMsg({ kind: "err", text: "Sem permissão para editar. Apenas ADM ou quem criou a OS." });
+      setTimeout(() => setMsg(null), 2200);
       return;
     }
-    setEditModal({
+    setEdit({
       open: true,
       saving: false,
       row,
       form: {
-        bairro: row.bairro || "",
-        rua: row.rua || "",
-        numero: row.numero || "",
-        ponto_referencia: row.ponto_referencia || "",
-        corte_na_rua: row.corte_na_rua ?? null,
+        os: row.os ?? "",
+        matricula: row.matricula ?? "",
+        bairro: row.bairro ?? "",
+        rua: row.rua ?? "",
+        numero: row.numero ?? "",
+        ponto_referencia: row.ponto_referencia ?? "",
+        corte_na_rua: row.corte_na_rua === true ? "true" : row.corte_na_rua === false ? "false" : "null",
       },
-      file: null,
     });
   }
 
-  function onChangeFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0] || null;
-    if (f && !/pdf$/i.test(f.name)) {
-      setMsg({ kind: "err", text: "Selecione um arquivo PDF." });
-      setTimeout(() => setMsg(null), 2000);
-      return;
-    }
-    setEditModal((m) => (m.open ? { ...m, file: f } : m));
-  }
-
-  async function salvarEdicao() {
-    if (!editModal.open || !editModal.row || !editModal.form) return;
+  async function saveEdit() {
+    if (!edit.row) return;
     try {
-      setEditModal((m) => ({ ...m, saving: true }));
-
-      // 1) upload de PDF (opcional)
-      let newPdfPath: string | undefined;
-      if (editModal.file) {
-        const file = editModal.file;
-        const ext = (file.name.split(".").pop() || "pdf").toLowerCase();
-        const safeName = `ordens_corte/${editModal.row.id}/${Date.now()}.${ext}`;
-        const { error: upErr } = await supabase.storage
-          .from("ordens-pdfs")
-          .upload(safeName, file, { cacheControl: "3600", upsert: true });
-        if (upErr) throw upErr;
-        newPdfPath = safeName;
-      }
-
-      // 2) patch de campos
+      setEdit((s) => ({ ...s, saving: true }));
+      const f = edit.form;
       const patch: any = {
-        bairro: (editModal.form.bairro || "").toUpperCase().trim(),
-        rua: (editModal.form.rua || "").toUpperCase().trim(),
-        numero: (editModal.form.numero || "").toUpperCase().trim(),
-        ponto_referencia: (editModal.form.ponto_referencia || "").toUpperCase().trim(),
-        corte_na_rua:
-          editModal.form.corte_na_rua === null ? null : editModal.form.corte_na_rua === true ? true : false,
+        os: f.os.trim() === "" ? null : f.os.trim(),
+        matricula: f.matricula.trim(),
+        bairro: f.bairro.trim(),
+        rua: f.rua.trim(),
+        numero: f.numero.trim(),
+        ponto_referencia: f.ponto_referencia.trim() === "" ? null : f.ponto_referencia.trim(),
+        corte_na_rua: f.corte_na_rua === "true" ? true : f.corte_na_rua === "false" ? false : null,
       };
-      if (newPdfPath) patch.pdf_ordem_path = newPdfPath;
-
-      const { error: updErr } = await supabase.from("ordens_corte").update(patch).eq("id", editModal.row.id);
-      if (updErr) {
-        if (/Impedido|insufficient_privilege|permission|RLS|row-level|policy|denied/i.test(updErr.message)) {
-          setPermText("A atualização foi bloqueada pelas regras de segurança.");
-          setPermModalOpen(true);
-          setEditModal({ open: false });
-          return;
-        }
-        throw updErr;
-      }
-
-      // 3) refletir no estado
-      setRows((prev) =>
-        prev.map((r) =>
-          r.id === editModal.row!.id
-            ? { ...r, ...patch }
-            : r
-        )
-      );
-
-      setMsg({ kind: "ok", text: "Papeleta atualizada." });
-      setTimeout(() => setMsg(null), 1800);
-      setEditModal({ open: false });
+      const { error } = await supabase.from("ordens_corte").update(patch).eq("id", edit.row.id);
+      if (error) throw error;
+      await load();
+      setMsg({ kind: "ok", text: "OS atualizada com sucesso." });
+      setTimeout(() => setMsg(null), 1600);
+      setEdit((s) => ({ ...s, open: false, saving: false, row: undefined }));
     } catch (e: any) {
-      setMsg({ kind: "err", text: e?.message ?? "Falha ao salvar alterações." });
+      setMsg({ kind: "err", text: e?.message || "Falha ao salvar." });
       setTimeout(() => setMsg(null), 2200);
-      setEditModal({ open: false });
+      setEdit((s) => ({ ...s, saving: false }));
     }
   }
 
-  // colgroup — agora em PERCENTUAL para ocupar toda a largura
+  // ------- layout: larguras FIXAS -------
   const colWidths = React.useMemo(
     () => [
-      "w-[8%]",   // matrícula (sticky)
-      "w-[12%]",  // bairro
-      "w-[24%]",  // rua e nº
-      "w-[18%]",  // ponto ref.
-      "w-[12%]",  // status / marcar
-      "w-[6%]",   // ordem (PDF)
-      "w-[10%]",  // criado em
-      "w-[5%]",   // corte na rua?
-      "w-[5%]",   // editar
+      "w-32", // matrícula
+      "w-40", // bairro
+      "w-[320px]", // rua e nº
+      "w-[300px]", // ponto ref
+      "w-48", // status / marcar
+      "w-28", // Ordem (PDF)
+      "w-40", // criado em
+      "w-36", // corte na rua?
+      "w-28", // editar
     ],
     []
   );
@@ -325,10 +289,10 @@ export default function PendingCutsTable() {
 
   return (
     <div className="rounded-2xl bg-slate-900/50 ring-1 ring-white/10 p-4">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
         <div>
           <h3 className="font-semibold">Cortes pendentes</h3>
-          <p className="text-slate-400 text-sm">Exibe apenas ordens com status “Aguardando Corte”.</p>
+          <p className="text-slate-400 text-sm">Exibe ordens com status “Aguardando Corte”.</p>
         </div>
         <button onClick={load} className="text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10">
           {loading ? "Atualizando…" : "Atualizar"}
@@ -345,7 +309,6 @@ export default function PendingCutsTable() {
         }}
       />
 
-      {/* Barra de mensagens */}
       {msg && (
         <div
           className={`mb-3 text-sm px-3 py-2 rounded-lg ${
@@ -356,14 +319,13 @@ export default function PendingCutsTable() {
         </div>
       )}
 
-      {/* tabela — agora ocupa mais ALTURA e LARGURA */}
-      <div className="rounded-xl ring-1 ring-white/10 overflow-auto h-[calc(100dvh-260px)]">
-        <table className="w-full text-sm table-fixed">
+      {/* Contêiner com rolagem; tabela com min-w p/ evitar “aperto” */}
+      <div className="rounded-xl ring-1 ring-white/10 max-h-[60vh] overflow-x-auto overflow-y-auto">
+        <table className="min-w-[1280px] w-max text-sm table-auto">
           <colgroup>{colEls}</colgroup>
-
           <thead className="sticky top-0 z-20 bg-slate-900/95 text-slate-100 backdrop-blur border-white/10">
             <tr>
-              <th className="!text-center font-medium py-2 px-3 sticky left-0 z-30 bg-slate-900/95 backdrop-blur border-r border-white/10">
+              <th className="sticky left-0 z-30 bg-slate-900/95 backdrop-blur py-2 px-3 text-center font-medium border-r border-white/10">
                 Matrícula
               </th>
               <th className="text-left font-medium py-2 px-3">Bairro</th>
@@ -378,78 +340,72 @@ export default function PendingCutsTable() {
           </thead>
 
           <tbody className="divide-y divide-white/10">
-            {rows.map((r) => (
-              <tr key={r.id} className="bg-slate-950/40 align-middle">
-                {/* Matrícula sticky */}
-                <td className="py-2 px-3 !text-center sticky left-0 z-10 bg-slate-950/80 backdrop-blur border-r border-white/10">
-                  <div className="w-full font-mono whitespace-nowrap tabular-nums">
+            {rows.map((r) => {
+              const allowed = canEditRow(r);
+              return (
+                <tr key={r.id} className="bg-slate-950/40 align-middle">
+                  {/* matrícula sticky */}
+                  <td className="sticky left-0 z-10 bg-slate-950/80 backdrop-blur py-2 px-3 font-mono text-center border-r border-white/10">
                     {r.matricula}
-                  </div>
-                </td>
+                  </td>
 
-                <td className="py-2 px-3">
-                  <div className="truncate" title={r.bairro}>
-                    {r.bairro}
-                  </div>
-                </td>
+                  <td className="py-2 px-3">
+                    <div className="truncate max-w-[160px]" title={r.bairro}>
+                      {r.bairro}
+                    </div>
+                  </td>
 
-                <td className="py-2 px-3">
-                  <div className="truncate" title={`${r.rua}, ${r.numero}`}>
-                    {r.rua}, {r.numero}
-                  </div>
-                </td>
+                  <td className="py-2 px-3">
+                    <div className="truncate max-w-[280px]" title={`${r.rua}, ${r.numero}`}>
+                      {r.rua}, {r.numero}
+                    </div>
+                  </td>
 
-                <td className="py-2 px-3">
-                  <div className="truncate" title={r.ponto_referencia || "—"}>
-                    {r.ponto_referencia || "—"}
-                  </div>
-                </td>
+                  <td className="py-2 px-3">
+                    <div className="truncate max-w-[260px]" title={r.ponto_referencia || "-"}>
+                      {r.ponto_referencia || "-"}
+                    </div>
+                  </td>
 
-                <td className="py-2 px-3 text-center whitespace-nowrap">
-                  <div className="inline-flex items-center gap-2">
-                    <StatusBadge status={r.status} />
-                    {canCut ? (
+                  {/* Status / Marcar (badge + botão Cortar) */}
+                  <td className="py-2 px-3 text-center whitespace-nowrap">
+                    <div className="inline-flex items-center gap-2">
+                      <StatusBadge status={r.status} />
                       <button
-                        onClick={() => onClickCortar(r)}
-                        className="px-3 py-1.5 text-xs rounded-lg bg-rose-500/20 text-rose-200 ring-1 ring-rose-400/40 hover:bg-rose-500/30 whitespace-nowrap"
+                        onClick={() => askMarkCortada(r)}
+                        className="px-3 py-1.5 text-xs rounded-lg bg-rose-600/20 text-rose-200 ring-1 ring-rose-400/30 hover:bg-rose-600/30 whitespace-nowrap"
+                        title="Marcar como cortada"
                       >
                         Cortar
                       </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPermText("Apenas TERCEIRIZADA e ADM podem marcar como CORTADA.");
-                          setPermModalOpen(true);
-                        }}
-                        className="px-3 py-1.5 text-xs rounded-lg bg-rose-500/10 text-rose-300 ring-1 ring-rose-400/20 cursor-not-allowed opacity-75 whitespace-nowrap"
-                        title="Sem permissão"
-                      >
-                        Cortar
-                      </button>
-                    )}
-                  </div>
-                </td>
-                <td className="py-2 px-3 text-center">{renderImprimirCell(r)}</td>
-                <td className="py-2 px-3 text-center whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
-                <td className="py-2 px-3 text-center">{renderCorteNaRua(r.corte_na_rua)}</td>
+                    </div>
+                  </td>
 
-                {/* Coluna EDITAR */}
-                <td className="py-2 px-3 text-center">
-                  <button
-                    onClick={() => openEditModal(r)}
-                    className="px-3 py-1.5 text-xs rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 whitespace-nowrap"
-                  >
-                    Editar
-                  </button>
-                </td>
-              </tr>
-            ))}
+                  {/* Ordem (PDF) — separado */}
+                  <td className="py-2 px-3 text-center">{renderPdfCell(r)}</td>
+
+                  <td className="py-2 px-3 text-center whitespace-nowrap">{fmt(r.created_at)}</td>
+
+                  <td className="py-2 px-3 text-center">{renderCorteNaRua(r.corte_na_rua)}</td>
+
+                  <td className="py-2 px-3 text-center">
+                    <button
+                      onClick={() => openEdit(r)}
+                      disabled={!allowed}
+                      className="px-3 py-1.5 text-xs rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 disabled:opacity-60 disabled:cursor-not-allowed"
+                      title={allowed ? "Editar OS" : "Somente ADM ou quem criou pode editar"}
+                    >
+                      Editar
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
 
             {rows.length === 0 && (
               <tr>
                 <td colSpan={9} className="py-6 text-center text-slate-400">
-                  Nenhuma papeleta pendente.
+                  Nenhuma OS encontrada.
                 </td>
               </tr>
             )}
@@ -457,15 +413,17 @@ export default function PendingCutsTable() {
         </table>
       </div>
 
-      {/* Modal de permissão negada */}
-      {permModalOpen && (
+      {/* Sem permissão para marcar corte */}
+      {permOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-lg text-center">
-            <h3 className="text-lg font-semibold text-white">Permissão necessária</h3>
-            <p className="text-slate-300 text-sm mt-2">{permText}</p>
-            <div className="mt-5">
+          <div className="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-sm text-center">
+            <h3 className="text-lg font-semibold text-white mb-2">Permissão necessária</h3>
+            <p className="text-slate-300 text-sm">
+              Apenas <b>TERCEIRIZADA</b> e <b>ADM</b> podem marcar corte.
+            </p>
+            <div className="mt-4">
               <button
-                onClick={() => setPermModalOpen(false)}
+                onClick={() => setPermOpen(false)}
                 className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white text-sm"
               >
                 Entendi
@@ -475,154 +433,131 @@ export default function PendingCutsTable() {
         </div>
       )}
 
-      {/* Modal confirmar CORTE */}
-      {confirmOpen.open && (
+      {/* Confirmar Cortar */}
+      {confirm.open && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-sm">
-            <h3 className="text-lg font-semibold text-white mb-2">Confirmar corte</h3>
+          <div className="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-sm">
+            <h3 className="text-lg font-semibold text-white mb-2">Marcar como cortada</h3>
             <p className="text-slate-300 text-sm mb-4">
-              Confirmar <b>corte</b> da matrícula <b>{confirmOpen.matricula}</b>?
+              Confirmar marcação da matrícula <b>{confirm.matricula}</b> como <b>CORTADA</b>?
             </p>
             <div className="mt-3 flex justify-end gap-3">
               <button
-                onClick={() => setConfirmOpen({ open: false })}
+                onClick={() => setConfirm({ open: false })}
                 className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white text-sm"
-                disabled={!!confirmOpen.saving}
+                disabled={!!confirm.saving}
               >
                 Cancelar
               </button>
               <button
-                onClick={confirmarCorte}
+                onClick={doMarkCortada}
                 className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-sm disabled:opacity-60"
-                disabled={!!confirmOpen.saving}
+                disabled={!!confirm.saving}
               >
-                {confirmOpen.saving ? "Cortando…" : "Confirmar corte"}
+                {confirm.saving ? "Marcando…" : "Cortar"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal EDITAR */}
-      {editModal.open && editModal.row && editModal.form && (
+      {/* MODAL EDITAR OS */}
+      {edit.open && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-lg">
-            <h3 className="text-lg font-semibold text-white mb-2">Editar papeleta</h3>
-            <p className="text-slate-300 text-sm mb-4">
-              Matrícula <b>{editModal.row.matricula}</b>
-            </p>
+          <div className="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-xl">
+            <h3 className="text-lg font-semibold text-white mb-4">Editar OS</h3>
 
-            <div className="grid grid-cols-2 gap-3">
-              <label className="text-sm text-slate-300">
-                Bairro
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">OS</label>
                 <input
-                  value={editModal.form.bairro}
-                  onChange={(e) => setEditModal((m) => (m.open ? { ...m, form: { ...m.form!, bairro: e.target.value } } : m))}
-                  className="mt-1 w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
+                  className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
+                  value={edit.form.os}
+                  onChange={(e) => setEdit((s) => ({ ...s, form: { ...s.form, os: e.target.value } }))}
+                  placeholder="Número da OS"
                 />
-              </label>
+              </div>
 
-              <label className="text-sm text-slate-300">
-                Rua
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">Matrícula</label>
                 <input
-                  value={editModal.form.rua}
-                  onChange={(e) => setEditModal((m) => (m.open ? { ...m, form: { ...m.form!, rua: e.target.value } } : m))}
-                  className="mt-1 w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
+                  className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
+                  value={edit.form.matricula}
+                  onChange={(e) => setEdit((s) => ({ ...s, form: { ...s.form, matricula: e.target.value } }))}
                 />
-              </label>
+              </div>
 
-              <label className="text-sm text-slate-300">
-                Número
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">Bairro</label>
                 <input
-                  value={editModal.form.numero}
-                  onChange={(e) => setEditModal((m) => (m.open ? { ...m, form: { ...m.form!, numero: e.target.value } } : m))}
-                  className="mt-1 w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
+                  className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
+                  value={edit.form.bairro}
+                  onChange={(e) => setEdit((s) => ({ ...s, form: { ...s.form, bairro: e.target.value } }))}
                 />
-              </label>
+              </div>
 
-              <label className="text-sm text-slate-300 col-span-2">
-                Ponto de referência
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">Rua</label>
                 <input
-                  value={editModal.form.ponto_referencia}
-                  onChange={(e) =>
-                    setEditModal((m) => (m.open ? { ...m, form: { ...m.form!, ponto_referencia: e.target.value } } : m))
-                  }
-                  className="mt-1 w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
+                  className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
+                  value={edit.form.rua}
+                  onChange={(e) => setEdit((s) => ({ ...s, form: { ...s.form, rua: e.target.value } }))}
                 />
-              </label>
+              </div>
 
-              <label className="text-sm text-slate-300">
-                Corte na rua?
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">Número</label>
+                <input
+                  className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
+                  value={edit.form.numero}
+                  onChange={(e) => setEdit((s) => ({ ...s, form: { ...s.form, numero: e.target.value } }))}
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-xs text-slate-300 mb-1">Ponto de referência</label>
+                <input
+                  className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
+                  value={edit.form.ponto_referencia}
+                  onChange={(e) => setEdit((s) => ({ ...s, form: { ...s.form, ponto_referencia: e.target.value } }))}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">Corte na rua?</label>
                 <select
-                  value={editModal.form.corte_na_rua === null ? "" : editModal.form.corte_na_rua ? "true" : "false"}
-                  onChange={(e) =>
-                    setEditModal((m) =>
-                      m.open
-                        ? {
-                            ...m,
-                            form: {
-                              ...m.form!,
-                              corte_na_rua: e.target.value === "" ? null : e.target.value === "true",
-                            },
-                          }
-                        : m
-                    )
-                  }
-                  className="mt-1 w-full rounded-md bg-slate-900/60 border border-white/10 px-2 py-1 outline-none focus:ring-2 ring-emerald-400/40"
+                  className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
+                  value={edit.form.corte_na_rua}
+                  onChange={(e) => setEdit((s) => ({ ...s, form: { ...s.form, corte_na_rua: e.target.value as any } }))}
                 >
-                  <option value="">—</option>
+                  <option value="null">—</option>
                   <option value="true">SIM</option>
                   <option value="false">NÃO</option>
                 </select>
-              </label>
-
-              <label className="text-sm text-slate-300 col-span-2">
-                PDF da ordem
-                <div className="mt-1 flex items-center gap-3">
-                  <input
-                    type="file"
-                    accept="application/pdf,.pdf"
-                    onChange={onChangeFile}
-                    className="block w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-white/10 file:text-slate-100 hover:file:bg-white/20"
-                  />
-                  {editModal.row.pdf_ordem_path ? (
-                    <a
-                      href={supabase.storage.from("ordens-pdfs").getPublicUrl(editModal.row.pdf_ordem_path).data.publicUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs underline text-indigo-300"
-                    >
-                      atual
-                    </a>
-                  ) : (
-                    <span className="text-xs text-slate-400">sem PDF</span>
-                  )}
-                </div>
-                <p className="text-[11px] text-slate-400 mt-1">Selecione para substituir o PDF atual (opcional).</p>
-              </label>
+              </div>
             </div>
 
             <div className="mt-5 flex justify-end gap-3">
               <button
-                onClick={() => setEditModal({ open: false })}
+                onClick={() => setEdit((s) => ({ ...s, open: false }))}
+                disabled={edit.saving}
                 className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white text-sm"
-                disabled={!!editModal.saving}
               >
                 Cancelar
               </button>
               <button
-                onClick={salvarEdicao}
-                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm disabled:opacity-60"
-                disabled={!!editModal.saving}
+                onClick={saveEdit}
+                disabled={edit.saving}
+                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm disabled:opacity-60"
               >
-                {editModal.saving ? "Salvando…" : "Salvar alterações"}
+                {edit.saving ? "Salvando…" : "Salvar"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Toast no canto */}
+      {/* Toast */}
       {msg && (
         <div
           className={`fixed bottom-5 right-5 px-4 py-2 rounded-lg shadow-lg text-sm z-50 ${
@@ -634,41 +569,4 @@ export default function PendingCutsTable() {
       )}
     </div>
   );
-
-  // ======== FUNÇÕES AUXILIARES (abaixo do return) ========
-
-  function renderImprimirCell(row: CorteRow) {
-    if (!row.pdf_ordem_path) return "—";
-    const { data } = supabase.storage.from("ordens-pdfs").getPublicUrl(row.pdf_ordem_path);
-    const url = data?.publicUrl;
-    if (!url) return <span className="text-slate-400 text-xs">Sem link</span>;
-    return (
-      <a
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30 whitespace-nowrap"
-      >
-        Imprimir
-      </a>
-    );
-  }
-
-  function renderCorteNaRua(val: boolean | null) {
-    if (val === true) {
-      return (
-        <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-emerald-600/20 text-emerald-200 ring-emerald-400/40 whitespace-nowrap">
-          SIM
-        </span>
-      );
-    }
-    if (val === false) {
-      return (
-        <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-rose-600/20 text-rose-200 ring-rose-400/40 whitespace-nowrap">
-          NÃO
-        </span>
-      );
-    }
-    return "—";
-  }
 }
