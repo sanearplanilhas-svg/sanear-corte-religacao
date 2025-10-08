@@ -110,31 +110,50 @@ export default function AllOrdersTable() {
 
   async function load() {
     setLoading(true);
-    let query = supabase
-      .from("ordens_corte")
-      .select(
-        "id, os, matricula, bairro, rua, numero, ponto_referencia, status, pdf_path, pdf_ordem_path, created_at, cortada_em, corte_na_rua"
-      );
+    try {
+      let query = supabase
+        .from("ordens_corte")
+        .select(
+          "id, os, matricula, bairro, rua, numero, ponto_referencia, status, pdf_path, pdf_ordem_path, created_at, cortada_em, corte_na_rua"
+        );
 
-    if (filter.startDate) query = query.gte("created_at", `${filter.startDate}T00:00:00`);
-    if (filter.endDate) query = query.lte("created_at", `${filter.endDate}T23:59:59`);
+      // ► REGRAS DE DATA por status:
+      // - "cortada" => filtra por cortada_em
+      // - "all" e "aguardando" => filtra por created_at
+      if (statusFilter === "cortada") {
+        if (filter.startDate) query = query.gte("cortada_em", `${filter.startDate}T00:00:00`);
+        if (filter.endDate)   query = query.lte("cortada_em", `${filter.endDate}T23:59:59`);
+        // força status de cortada
+        query = query.in("status", ["Cortada","cortada","Cortado","cortado","Feito","feito"]);
+      } else {
+        // "all" e "aguardando" => criadas nesse intervalo
+        if (filter.startDate) query = query.gte("created_at", `${filter.startDate}T00:00:00`);
+        if (filter.endDate)   query = query.lte("created_at", `${filter.endDate}T23:59:59`);
+        if (statusFilter === "aguardando") {
+          query = query.in("status", [
+            "Aguardando Corte","aguardando corte","Aguardando","aguardando","Pendente","pendente"
+          ]);
+        }
+      }
 
-    if ((filter.q || "").trim() !== "") {
-      const q = filter.q!.trim();
-      query = query.or(`matricula.ilike.%${q}%,bairro.ilike.%${q}%,rua.ilike.%${q}%,os.ilike.%${q}%`);
-    }
+      // ► Busca textual (matrícula, bairro, rua, os)
+      if ((filter.q || "").trim() !== "") {
+        const q = filter.q!.trim();
+        query = query.or(`matricula.ilike.%${q}%,bairro.ilike.%${q}%,rua.ilike.%${q}%,os.ilike.%${q}%`);
+      }
 
-    query = query.order("created_at", { ascending: false });
+      query = query.order("created_at", { ascending: false });
 
-    const { data, error } = await query;
-    if (error) {
-      setMsg({ kind: "err", text: error.message });
-      setTimeout(() => setMsg(null), 2200);
-    } else {
+      const { data, error } = await query;
+      if (error) throw error;
+
       setRows(((data || []) as unknown) as CutRow[]);
+    } catch (error: any) {
+      setMsg({ kind: "err", text: error?.message || "Erro ao carregar" });
+      setTimeout(() => setMsg(null), 2200);
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   }
 
   React.useEffect(() => {
@@ -234,6 +253,49 @@ export default function AllOrdersTable() {
 
   const fmt = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR") : "—");
 
+  // impressão da tabela visível (respeita os filtros atuais)
+  function handlePrint() {
+    const cols = ["Matrícula","OS","Bairro","Rua e nº","Ponto ref.","Status","Criado em","Cortada em","Corte na rua?"];
+    const rowsToPrint = filteredRows || rows;
+
+    const esc = (v: any) => (v == null ? "-" : String(v));
+    const fmtDate = (d?: string | null) => {
+      try { return d ? new Date(d).toLocaleString("pt-BR") : "-"; } catch { return esc(d); }
+    };
+
+    const htmlRows = rowsToPrint.map(r => [
+      esc(r.matricula),
+      esc(r.os),
+      esc(r.bairro),
+      esc(`${r.rua}, ${r.numero}`),
+      esc(r.ponto_referencia),
+      esc(r.status),
+      fmtDate(r.created_at),
+      fmtDate(r.cortada_em),
+      r.corte_na_rua === true ? "Sim" : r.corte_na_rua === false ? "Não" : "-"
+    ]);
+
+    const html = `
+    <html><head><meta charset="utf-8"><title>Impressão - Ordens de Corte</title>
+    <style>
+      body{font:12px system-ui,Arial,sans-serif;color:#000;padding:16px}
+      table{width:100%;border-collapse:collapse}
+      th,td{border:1px solid #333;padding:6px;text-align:left}
+      th{background:#eee}
+      h3{margin:0 0 12px 0}
+    </style></head><body>
+    <h3>Ordens de Corte</h3>
+    <table>
+      <thead><tr>${cols.map(c=>`<th>${c}</th>`).join("")}</tr></thead>
+      <tbody>${htmlRows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join("")}</tr>`).join("")}</tbody>
+    </table>
+    <script>window.onload=()=>window.print()</script>
+    </body></html>`;
+
+    const w = window.open("", "_blank");
+    if (w) { w.document.write(html); w.document.close(); }
+  }
+
   // Larguras das colunas — mantidas; adiciona w-10 quando deleteMode
   const colWidths = React.useMemo(() => {
     const arr: string[] = [];
@@ -295,6 +357,15 @@ export default function AllOrdersTable() {
               Cortada
             </button>
           </div>
+
+          {/* Botão imprimir (imprime a tabela do jeito que está filtrada em tela) */}
+          <button
+            onClick={handlePrint}
+            className="text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10"
+          >
+            Imprimir
+          </button>
+
           <button
             onClick={load}
             className="text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10"

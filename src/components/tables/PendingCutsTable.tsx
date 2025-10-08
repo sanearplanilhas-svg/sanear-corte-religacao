@@ -1,3 +1,4 @@
+// src/components/tables/PendingCutsTable.tsx
 import * as React from "react";
 import supabase from "../../lib/supabase";
 import ListFilterBar, { ListFilter } from "../../components/filters/ListFilterBar";
@@ -115,7 +116,7 @@ export default function PendingCutsTable() {
           "pdf_ordem_path",
           "created_at",
           "corte_na_rua",
-          "created_by", // <- para permissão de edição
+          "created_by",
         ].join(", ")
       )
       .or(["status.eq.aguardando_corte", "status.ilike.%aguardando corte%"].join(","))
@@ -251,7 +252,7 @@ export default function PendingCutsTable() {
     try {
       setEditModal((m) => ({ ...m, saving: true }));
 
-      // 1) se tiver PDF novo, sobe primeiro
+      // 1) upload de PDF (opcional)
       let newPdfPath: string | undefined;
       if (editModal.file) {
         const file = editModal.file;
@@ -286,14 +287,11 @@ export default function PendingCutsTable() {
         throw updErr;
       }
 
-      // 3) reflete no estado local
+      // 3) refletir no estado
       setRows((prev) =>
         prev.map((r) =>
           r.id === editModal.row!.id
-            ? {
-                ...r,
-                ...patch,
-              }
+            ? { ...r, ...patch }
             : r
         )
       );
@@ -308,18 +306,18 @@ export default function PendingCutsTable() {
     }
   }
 
-  // colgroup
+  // colgroup — agora em PERCENTUAL para ocupar toda a largura
   const colWidths = React.useMemo(
     () => [
-      "w-28", // matrícula (sticky)
-      "w-48", // bairro
-      "w-[340px]", // rua e nº
-      "w-[320px]", // ponto ref
-      "w-56", // status / marcar
-      "w-28", // ordem (PDF)
-      "w-40", // criado em
-      "w-36", // corte na rua?
-      "w-28", // EDITAR
+      "w-[8%]",   // matrícula (sticky)
+      "w-[12%]",  // bairro
+      "w-[24%]",  // rua e nº
+      "w-[18%]",  // ponto ref.
+      "w-[12%]",  // status / marcar
+      "w-[6%]",   // ordem (PDF)
+      "w-[10%]",  // criado em
+      "w-[5%]",   // corte na rua?
+      "w-[5%]",   // editar
     ],
     []
   );
@@ -358,14 +356,14 @@ export default function PendingCutsTable() {
         </div>
       )}
 
-      {/* tabela */}
-      <div className="rounded-xl ring-1 ring-white/10 max-h-[60vh] overflow-x-auto overflow-y-auto">
-        <table className="min-w-[1380px] w-max text-sm table-auto">
+      {/* tabela — agora ocupa mais ALTURA e LARGURA */}
+      <div className="rounded-xl ring-1 ring-white/10 overflow-auto h-[calc(100dvh-260px)]">
+        <table className="w-full text-sm table-fixed">
           <colgroup>{colEls}</colgroup>
 
           <thead className="sticky top-0 z-20 bg-slate-900/95 text-slate-100 backdrop-blur border-white/10">
             <tr>
-              <th className="text-left font-medium py-2 px-3 sticky left-0 z-30 bg-slate-900/95 backdrop-blur border-r border-white/10">
+              <th className="!text-center font-medium py-2 px-3 sticky left-0 z-30 bg-slate-900/95 backdrop-blur border-r border-white/10">
                 Matrícula
               </th>
               <th className="text-left font-medium py-2 px-3">Bairro</th>
@@ -383,24 +381,26 @@ export default function PendingCutsTable() {
             {rows.map((r) => (
               <tr key={r.id} className="bg-slate-950/40 align-middle">
                 {/* Matrícula sticky */}
-                <td className="py-2 px-3 font-mono whitespace-nowrap sticky left-0 z-10 bg-slate-950/80 backdrop-blur border-r border-white/10">
-                  {r.matricula}
+                <td className="py-2 px-3 !text-center sticky left-0 z-10 bg-slate-950/80 backdrop-blur border-r border-white/10">
+                  <div className="w-full font-mono whitespace-nowrap tabular-nums">
+                    {r.matricula}
+                  </div>
                 </td>
 
                 <td className="py-2 px-3">
-                  <div className="truncate max-w-[180px]" title={r.bairro}>
+                  <div className="truncate" title={r.bairro}>
                     {r.bairro}
                   </div>
                 </td>
 
                 <td className="py-2 px-3">
-                  <div className="truncate max-w-[300px]" title={`${r.rua}, ${r.numero}`}>
+                  <div className="truncate" title={`${r.rua}, ${r.numero}`}>
                     {r.rua}, {r.numero}
                   </div>
                 </td>
 
                 <td className="py-2 px-3">
-                  <div className="truncate max-w-[280px]" title={r.ponto_referencia || "—"}>
+                  <div className="truncate" title={r.ponto_referencia || "—"}>
                     {r.ponto_referencia || "—"}
                   </div>
                 </td>
@@ -430,7 +430,6 @@ export default function PendingCutsTable() {
                     )}
                   </div>
                 </td>
-
                 <td className="py-2 px-3 text-center">{renderImprimirCell(r)}</td>
                 <td className="py-2 px-3 text-center whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
                 <td className="py-2 px-3 text-center">{renderCorteNaRua(r.corte_na_rua)}</td>
@@ -509,7 +508,9 @@ export default function PendingCutsTable() {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-lg">
             <h3 className="text-lg font-semibold text-white mb-2">Editar papeleta</h3>
-            <p className="text-slate-300 text-sm mb-4">Matrícula <b>{editModal.row.matricula}</b></p>
+            <p className="text-slate-300 text-sm mb-4">
+              Matrícula <b>{editModal.row.matricula}</b>
+            </p>
 
             <div className="grid grid-cols-2 gap-3">
               <label className="text-sm text-slate-300">
@@ -553,9 +554,7 @@ export default function PendingCutsTable() {
               <label className="text-sm text-slate-300">
                 Corte na rua?
                 <select
-                  value={
-                    editModal.form.corte_na_rua === null ? "" : editModal.form.corte_na_rua ? "true" : "false"
-                  }
+                  value={editModal.form.corte_na_rua === null ? "" : editModal.form.corte_na_rua ? "true" : "false"}
                   onChange={(e) =>
                     setEditModal((m) =>
                       m.open

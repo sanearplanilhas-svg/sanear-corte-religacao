@@ -43,14 +43,17 @@ function norm(s?: string | null) {
 function badgeStyle(status: string) {
   const s = norm(status);
   const isAtiva = s === "ativa" || s === "ativo";
-  const isAguardandoRelig = s === "aguardando religacao" || s.startsWith("aguardando religacao");
-  const isAguardandoLiber = s === "aguardando liberacao" || s === "liberacao pendente";
+  // unificado: "liberacao pendente" e "aguardando liberacao" entram como "Aguardando Religação"
+  const isAguardandoRelig =
+    s === "aguardando religacao" ||
+    s.startsWith("aguardando religacao") ||
+    s === "liberacao pendente" ||
+    s === "aguardando liberacao";
   const isAguardandoCorte = s === "aguardando corte" || s.startsWith("aguardando corte");
   const isCortada = s.includes("cortad");
 
   if (isAtiva) return "bg-emerald-600 text-white ring-emerald-400/40";
   if (isAguardandoRelig) return "bg-amber-500 text-black ring-amber-300/40";
-  if (isAguardandoLiber) return "bg-violet-600 text-white ring-violet-400/40";
   if (isAguardandoCorte) return "bg-fuchsia-600 text-white ring-fuchsia-400/40";
   if (isCortada) return "bg-rose-600 text-white ring-rose-400/40";
   return "bg-slate-500 text-white ring-slate-400/40";
@@ -61,7 +64,8 @@ function derivarStatusAtual(corte: OrdemBase | null, relig: OrdemBase | null): s
   const cc = norm(corte?.status);
 
   if (rc === "ativa" || rc === "ativo") return "Ativa";
-  if (rc === "liberacao pendente") return "Aguardando Liberação";
+  // unificado: "liberação pendente" -> "Aguardando Religação"
+  if (rc === "liberacao pendente" || rc === "aguardando liberacao") return "Aguardando Religação";
   if (rc === "aguardando religacao" || rc.startsWith("aguardando religacao")) return "Aguardando Religação";
 
   if (cc.includes("cortad")) return "Cortada";
