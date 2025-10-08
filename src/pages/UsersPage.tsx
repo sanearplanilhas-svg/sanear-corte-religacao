@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 // Compatível com default export OU export nomeado no seu supabase client:
 import supabaseDefault from "../lib/supabase";
 
-// ---- Tipagem leve para evitar TS 2532 em métodos de auth/from/rpc
+// ---- Tipagem leve para evitar TS 2532 em métodos de auth/from/rpc/channel
 type SupabaseLike = {
   auth: {
     getUser: () => Promise<{ data: { user?: any } | null; error: any }>;
@@ -19,6 +19,7 @@ type SupabaseLike = {
       opts?: { body?: any; headers?: Record<string, string> }
     ) => Promise<{ data: any; error: any }>;
   };
+  channel?: (name: string, opts?: any) => any; // Realtime presence
 };
 
 // Funciona se ../lib/supabase exportar default ou { supabase }
@@ -129,11 +130,63 @@ const Avatar: React.FC<{ text: string; size?: number; className?: string }> = ({
   );
 };
 
+// Pequeno ponto de status online/offline
+const Dot: React.FC<{ online: boolean; title?: string }> = ({ online, title }) => (
+  <span
+    title={title}
+    className={`inline-block h-2.5 w-2.5 rounded-full ${online ? "bg-emerald-400" : "bg-rose-400"}`}
+  />
+);
+
+// --------- Helpers de erro para Supabase Functions (lê ReadableStream) ----------
+async function readInvokeError(err: any): Promise<string> {
+  try {
+    // @supabase/supabase-js retorna um objeto com { status, body: ReadableStream, ... }
+    const body: any = (err as any)?.body ?? (err as any)?.context?.body;
+    if (body?.getReader) {
+      const reader = body.getReader();
+      const decoder = new TextDecoder();
+      let text = "";
+      // lê todo o stream (normalmente é pequeno)
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value);
+      }
+      try {
+        const parsed = JSON.parse(text);
+        return (parsed?.error as string) || text || "Erro desconhecido ao executar a Function.";
+      } catch {
+        return text || "Erro desconhecido ao executar a Function.";
+      }
+    }
+    // fallback
+    return (err?.message as string) || "Falha ao chamar a Function.";
+  } catch {
+    return "Falha ao chamar a Function.";
+  }
+}
+
+async function callEdgeFunction(name: string, body: any): Promise<{ ok: boolean; data?: any; error?: string }> {
+  if (!(supabase as any).functions?.invoke) {
+    return { ok: false, error: "Supabase Functions não disponível." };
+  }
+  const res = await (supabase as any).functions.invoke(name, { body });
+  if (res.error) {
+    const msg = await readInvokeError(res.error);
+    return { ok: false, error: msg };
+  }
+  return { ok: true, data: res.data };
+}
+
 // =================== Componente ===================
 export default function UsersPage() {
   // sessão/perm.
   const [userId, setUserId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+
+  // presença (map de usuários online pelo id)
+  const [onlineMap, setOnlineMap] = useState<Record<string, boolean>>({});
 
   // form do próprio usuário
   const [form, setForm] = useState<FormData>({
@@ -526,7 +579,7 @@ export default function UsersPage() {
     }
   }
 
-  // ✅ Agora usando Supabase Functions (envia o Bearer automaticamente)
+  // ✅ Reset de senha do usuário via Supabase Functions
   async function changePasswordForUser() {
     if (!editUser) return;
     setModalErr(null);
@@ -538,11 +591,11 @@ export default function UsersPage() {
 
     setChangingPwd(true);
     try {
-      const { error: fnErr } = await (supabase as any).functions.invoke?.("admin-reset-password", {
-        body: { user_id: editUser.id, new_password: newPwd },
-      }) ?? { error: { message: "Supabase Functions não disponível." } };
-
-      if (fnErr) throw new Error(fnErr.message || "Falha na alteração da senha.");
+      const r = await callEdgeFunction("admin-reset-password", {
+        user_id: editUser.id,
+        new_password: newPwd,
+      });
+      if (!r.ok) { setModalErr(r.error || "Falha na alteração da senha."); return; }
 
       setModalMsg("Senha alterada com sucesso!");
       setNewPwd(""); setNewPwd2(""); setAdminPasscode("");
@@ -580,18 +633,19 @@ export default function UsersPage() {
 
     setCuSaving(true);
     try {
-      const { error: fnErr } = await (supabase as any).functions.invoke?.("admin-create-user", {
-        body: {
-          email,
-          password: cuPwd1,
-          nome: (cuNome || "").trim() || "Sem Nome",
-          setor: normalizeSetorForDB(cuSetor || "ADM"),
-          telefone: (cuTelefone || "").trim() || null,
-          papel: cuPapel,
-        },
-      }) ?? { error: { message: "Supabase Functions não disponível." } };
+      const r = await callEdgeFunction("admin-create-user", {
+        email,
+        password: cuPwd1,
+        nome: (cuNome || "").trim() || "Sem Nome",
+        setor: normalizeSetorForDB(cuSetor || "ADM"),
+        telefone: (cuTelefone || "").trim() || null,
+        papel: cuPapel,
+      });
 
-      if (fnErr) throw new Error(fnErr.message || "Falha ao criar usuário.");
+      if (!r.ok) {
+        setCuErr(r.error || "Falha ao criar usuário.");
+        return;
+      }
 
       setCuMsg("Usuário criado com sucesso!");
       await loadUsers();
@@ -603,6 +657,55 @@ export default function UsersPage() {
       setCuSaving(false);
     }
   }
+
+  // -------------------------- Presence (online/offline) --------------------------
+  useEffect(() => {
+    // inicia presença quando já temos userId
+    if (!userId || !(supabase as any).channel) return;
+
+    const channel = (supabase as any).channel("presence-users", {
+      config: { presence: { key: userId } },
+    });
+
+    // Ao sincronizar: atualiza mapa de quem está online
+    channel.on("presence", { event: "sync" }, () => {
+      const state = channel.presenceState?.() || {};
+      const ids = Object.keys(state); // keys são os presence keys (userId)
+      const next: Record<string, boolean> = {};
+      ids.forEach((id) => { next[id] = true; });
+      setOnlineMap(next);
+    });
+
+    // join/leave: recalcula a partir do estado atual
+    channel.on("presence", { event: "join" }, () => {
+      const state = channel.presenceState?.() || {};
+      const ids = Object.keys(state);
+      const next: Record<string, boolean> = {};
+      ids.forEach((id) => { next[id] = true; });
+      setOnlineMap(next);
+    });
+    channel.on("presence", { event: "leave" }, () => {
+      const state = channel.presenceState?.() || {};
+      const ids = Object.keys(state);
+      const next: Record<string, boolean> = {};
+      ids.forEach((id) => { next[id] = true; });
+      setOnlineMap(next);
+    });
+
+    // Subscribe e track do próprio usuário
+    channel.subscribe((status: string) => {
+      if (status === "SUBSCRIBED") {
+        channel.track?.({
+          online_at: new Date().toISOString(),
+        });
+      }
+    });
+
+    // cleanup
+    return () => {
+      try { channel.unsubscribe(); } catch {}
+    };
+  }, [userId]);
 
   // -------------------------- Efeitos --------------------------
   useEffect(() => { loadProfile(); }, []);
@@ -850,6 +953,7 @@ export default function UsersPage() {
             <table className="min-w-full text-sm">
               <thead className="bg-slate-800/60 text-slate-300">
                 <tr>
+                  <th className="text-left px-4 py-2 font-semibold">Status</th>
                   <th className="text-left px-4 py-2 font-semibold">Usuário</th>
                   <th className="text-left px-4 py-2 font-semibold">Nome</th>
                   <th className="text-left px-4 py-2 font-semibold">Setor</th>
@@ -857,35 +961,41 @@ export default function UsersPage() {
               </thead>
               <tbody className="divide-y divide-white/5">
                 {usersLoading ? (
-                  <tr><td colSpan={3} className="px-4 py-6 text-slate-400">Carregando…</td></tr>
+                  <tr><td colSpan={4} className="px-4 py-6 text-slate-400">Carregando…</td></tr>
                 ) : filteredUsers.length === 0 ? (
-                  <tr><td colSpan={3} className="px-4 py-6 text-slate-400">Nenhum usuário encontrado.</td></tr>
+                  <tr><td colSpan={4} className="px-4 py-6 text-slate-400">Nenhum usuário encontrado.</td></tr>
                 ) : (
-                  filteredUsers.map((u) => (
-                    <tr
-                      key={u.id}
-                      onDoubleClick={() => openEditUser(u)}
-                      onKeyDown={(e) => { if (e.key === "Enter") openEditUser(u); }}
-                      tabIndex={0}
-                      className="hover:bg-white/5 cursor-default outline-none focus:bg-white/10"
-                      title="Duplo clique (ou Enter) para editar"
-                    >
-                      <td className="px-4 py-2 text-slate-200">
-                        <div className="flex items-center gap-2">
-                          <Avatar text={u.email || u.nome} size={26} />
-                          <span>{u.email}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-2 text-slate-200">{u.nome || "Sem Nome"}</td>
-                      <td className="px-4 py-2 text-slate-400">{u.setor || "—"}</td>
-                    </tr>
-                  ))
+                  filteredUsers.map((u) => {
+                    const isOnline = !!onlineMap[u.id];
+                    return (
+                      <tr
+                        key={u.id}
+                        onDoubleClick={() => openEditUser(u)}
+                        onKeyDown={(e) => { if (e.key === "Enter") openEditUser(u); }}
+                        tabIndex={0}
+                        className="hover:bg-white/5 cursor-default outline-none focus:bg-white/10"
+                        title="Duplo clique (ou Enter) para editar"
+                      >
+                        <td className="px-4 py-2">
+                          <Dot online={isOnline} title={isOnline ? "Online" : "Offline"} />
+                        </td>
+                        <td className="px-4 py-2 text-slate-200">
+                          <div className="flex items-center gap-2">
+                            <Avatar text={u.email || u.nome} size={26} />
+                            <span>{u.email}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2 text-slate-200">{u.nome || "Sem Nome"}</td>
+                        <td className="px-4 py-2 text-slate-400">{u.setor || "—"}</td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
           </div>
           <p className="text-[11px] text-slate-500 mt-2">
-            Dica: clique duas vezes em uma linha (ou pressione Enter) para editar o usuário.
+            Dica: clique duas vezes em uma linha (ou pressione Enter) para editar o usuário. • Bolinha <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-400 align-middle" /> online, <span className="inline-block h-2.5 w-2.5 rounded-full bg-rose-400 align-middle" /> offline.
           </p>
         </div>
       )}
