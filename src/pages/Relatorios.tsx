@@ -3,6 +3,13 @@ import * as React from "react";
 import supabase from "../lib/supabase";
 import { PDFDocument, PDFPage, StandardFonts, rgb } from "pdf-lib";
 
+/** Tipos do File System Access API (fallback para browsers sem typings) */
+declare global {
+  interface Window {
+    showSaveFilePicker?: (options?: any) => Promise<any>;
+  }
+}
+
 /** ===== Tipos ===== */
 type Base = "religacao" | "corte";
 
@@ -448,15 +455,23 @@ export default function ReportsPage() {
     return groups;
   }
 
-  /** ===== Imprimir PDF (template + margens + numeração + grupos) ===== */
-  async function handlePrint() {
+  /** ===== Nome sugerido do arquivo ===== */
+  function suggestFilename(): string {
+    const tipo = base === "religacao" ? "relatorio-religacoes" : "relatorio-cortes";
+    const a = start || "inicio";
+    const b = end || "fim";
+    return `${tipo}-${a}-a-${b}.pdf`.replace(/[^a-zA-Z0-9._-]+/g, "_");
+  }
+
+  /** ===== Gerar e BAIXAR PDF ===== */
+  async function handleDownload() {
     if (selectedCampos.length === 0) {
-      setMsg("Selecione pelo menos um campo para imprimir.");
+      setMsg("Selecione pelo menos um campo para baixar.");
       setTimeout(() => setMsg(""), 1600);
       return;
     }
     if (rows.length === 0) {
-      setMsg("Gere a prévia antes de imprimir.");
+      setMsg("Gere a prévia antes de baixar.");
       setTimeout(() => setMsg(""), 1600);
       return;
     }
@@ -499,7 +514,6 @@ export default function ReportsPage() {
       const fontSizeSub = 10;
       const fontSizeHeader = 9.5;
       const fontSizeBody = 9;
-      const fontSizePager = 9;
       const fontSizeGroup = 10.5;
 
       const textColor = rgb(0, 0, 0);
@@ -659,11 +673,12 @@ export default function ReportsPage() {
             const cw = (colWidths[idx] ?? 120) - cellPadX * 2;
             const raw = (r as any)[c.db];
             const value = raw == null ? "—" : DATE_FIELDS.has(c.db) ? fmtDateTime(raw) : String(raw);
-            const wrapped = wrapTextByWidth(font, UPPER(value), fontSizeBody, Math.max(20, cw));
+            const wrapped = wrapTextByWidth(font, UPPER(value), 9, Math.max(20, cw));
             linesPerCell.push(wrapped);
             if (wrapped.length > maxLines) maxLines = wrapped.length;
           });
 
+          const rowLineHeight = 12;
           const rowHeight = Math.max(rowLineHeight * maxLines + cellPadY * 2, rowLineHeight + cellPadY * 2);
 
           if (cursorY - rowHeight < minY) {
@@ -701,9 +716,9 @@ export default function ReportsPage() {
             const contentWidth = cw - cellPadX * 2;
             const align: "left" | "center" | "right" = c.align ?? "left";
 
-            let textY = cursorY - cellPadY - rowLineHeight;
+            let textY = cursorY - cellPadY - 12;
             contentLines.forEach((ln) => {
-              const tw = font.widthOfTextAtSize(ln, fontSizeBody);
+              const tw = font.widthOfTextAtSize(ln, 9);
               let dx = colX + cellPadX;
               if (align === "center") dx = colX + Math.max(cellPadX, (cw - tw) / 2);
               else if (align === "right") dx = colX + Math.max(cellPadX, cw - cellPadX - tw);
@@ -711,12 +726,12 @@ export default function ReportsPage() {
               page.drawText(ln, {
                 x: dx,
                 y: textY,
-                size: fontSizeBody,
+                size: 9,
                 font,
                 color: textColor,
                 maxWidth: contentWidth,
               });
-              textY -= rowLineHeight;
+              textY -= 12;
             });
 
             colX += cw;
@@ -742,7 +757,7 @@ export default function ReportsPage() {
         thickness: 0.8,
       });
 
-      // Numeração X de Y (com respiro do rodapé)
+      // Numeração X de Y (respiro do rodapé)
       const pages = pdfDoc.getPages();
       const total = pages.length;
       const pagerText = (i: number) => `${i + 1} de ${total}`;
@@ -756,38 +771,54 @@ export default function ReportsPage() {
         p.drawText(text, { x, y: pagerY, size: 9, font, color: textColor });
       });
 
-      // salvar e imprimir
+      // salvar bytes
       const bytes = await pdfDoc.save();
+
+      // ArrayBuffer “puro” (evita TS2322 em alguns TS configs)
       const ab =
         bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
           ? (bytes.buffer as ArrayBuffer)
           : (bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
-      const blob = new Blob([new Uint8Array(ab)], { type: "application/pdf" });
-      const url = URL.createObjectURL(blob);
 
-      const iframe = document.createElement("iframe");
-      iframe.style.position = "fixed";
-      iframe.style.right = "0";
-      iframe.style.bottom = "0";
-      iframe.style.width = "0";
-      iframe.style.height = "0";
-      iframe.style.border = "0";
-      iframe.src = url;
-      document.body.appendChild(iframe);
+      const filename = suggestFilename();
 
-      iframe.onload = () => {
+      // Preferir File System Access API, se disponível (abre diálogo de salvar)
+      if (typeof window.showSaveFilePicker === "function") {
         try {
-          iframe.contentWindow?.focus();
-          iframe.contentWindow?.print();
-        } finally {
-          setTimeout(() => {
-            URL.revokeObjectURL(url);
-            document.body.removeChild(iframe);
-          }, 1000);
+          const handle = await window.showSaveFilePicker({
+            suggestedName: filename,
+            types: [
+              {
+                description: "Documento PDF",
+                accept: { "application/pdf": [".pdf"] },
+              },
+            ],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(new Blob([ab], { type: "application/pdf" }));
+          await writable.close();
+          setMsg("PDF salvo com sucesso.");
+          setTimeout(() => setMsg(""), 1800);
+          return;
+        } catch (err: any) {
+          // Se o usuário cancelar, apenas cair para o fallback de download silencioso
         }
-      };
+      }
+
+      // Fallback: download automático (abre a barra/área de downloads do navegador)
+      const blob = new Blob([ab], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setMsg("Download iniciado.");
+      setTimeout(() => setMsg(""), 1800);
     } catch (e: any) {
-      setMsg(e?.message ?? "Falha ao gerar/abrir o PDF.");
+      setMsg(e?.message ?? "Falha ao gerar/baixar o PDF.");
       setTimeout(() => setMsg(""), 2200);
     } finally {
       setLoading(false);
@@ -934,12 +965,12 @@ export default function ReportsPage() {
               {loading ? "Carregando…" : "Gerar prévia"}
             </button>
             <button
-              onClick={handlePrint}
+              onClick={handleDownload}
               className="px-4 py-2 rounded-lg bg-indigo-600/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-600/30"
               disabled={loading || selectedCampos.length === 0 || rows.length === 0}
-              title={rows.length === 0 ? "Gere a prévia primeiro" : "Imprimir PDF"}
+              title={rows.length === 0 ? "Gere a prévia primeiro" : "Baixar PDF"}
             >
-              Imprimir PDF
+              Baixar PDF
             </button>
           </div>
 
@@ -972,7 +1003,7 @@ export default function ReportsPage() {
                 {rows.length === 0 ? (
                   <tr>
                     <td className="p-6 text-slate-400" colSpan={selectedCampos.length || 1}>
-                      Selecione os <b>Status</b>, os <b>campos</b> e clique em <b>Gerar prévia</b>. Depois use <b>Imprimir PDF</b>.
+                      Selecione os <b>Status</b>, os <b>campos</b> e clique em <b>Gerar prévia</b>. Depois use <b>Baixar PDF</b>.
                     </td>
                   </tr>
                 ) : (
@@ -993,7 +1024,7 @@ export default function ReportsPage() {
                           </td>
                         );
                       })}
-                    </tr>
+                  </tr>
                   ))
                 )}
               </tbody>

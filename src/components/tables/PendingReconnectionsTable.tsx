@@ -1,3 +1,4 @@
+// src/components/tables/PendingReconnectionsTable.tsx
 import * as React from "react";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import supabase from "../../lib/supabase";
@@ -30,6 +31,12 @@ type ReligRow = {
   telefone?: string | null;
   fone?: string | null;
   celular?: string | null;
+
+  // possíveis metadados de autoria (para permissão)
+  created_by?: string | null;
+  id_usuario?: string | null;
+  user_id?: string | null;
+  uid?: string | null;
 
   [key: string]: any;
 };
@@ -204,7 +211,7 @@ export default function PendingReconnectionsTable() {
       const body = lines.slice(1);
       const titleWidth = font.widthOfTextAtSize(title, titleSize);
       const bodyWidths = body.map((t) => font.widthOfTextAtSize(t, textSize));
-      const maxWidth = Math.max(titleWidth, ...bodyWidths, 300);
+      const _maxWidth = Math.max(titleWidth, ...bodyWidths, 300);
 
       const bodyHeight = body.length * textSize + (body.length - 1) * lineGap;
       const totalHeight = titleSize + lineGap + bodyHeight;
@@ -232,8 +239,6 @@ export default function PendingReconnectionsTable() {
         drawShadowText(t, lineX, y, textSize, rgb(0, 0, 0));
         y -= textSize + lineGap;
       });
-
-      // (sem marca d'água diagonal)
     });
 
     return await pdfDoc.save();
@@ -244,6 +249,13 @@ export default function PendingReconnectionsTable() {
     if (error || !data) throw new Error(error?.message || "Falha ao baixar PDF do armazenamento.");
     const buf = await data.arrayBuffer();
     return new Uint8Array(buf);
+  }
+
+  // --- helper para corrigir TS2322 (BlobPart vs Uint8Array<ArrayBufferLike>)
+  function u8ToArrayBuffer(u8: Uint8Array): ArrayBuffer {
+    const ab = new ArrayBuffer(u8.byteLength);
+    new Uint8Array(ab).set(u8);
+    return ab;
   }
 
   async function handleStampAndOpen(row: ReligRow) {
@@ -257,7 +269,9 @@ export default function PendingReconnectionsTable() {
       const original = await downloadFromStorage(row.pdf_ordem_path);
       const stamped = await stampPdfWithRow(original, row);
 
-      const blob = new Blob([stamped], { type: "application/pdf" });
+      // ✅ converte para ArrayBuffer “puro” antes de criar o Blob (corrige TS2322)
+      const ab = u8ToArrayBuffer(stamped);
+      const blob = new Blob([ab], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       window.open(url, "_blank", "noopener,noreferrer");
       setMsg({ kind: "ok", text: "PDF carimbado gerado." });
@@ -282,10 +296,12 @@ export default function PendingReconnectionsTable() {
       ponto_referencia: string;
       prioridade: "true" | "false";
     };
+    pdfFile: File | null;
   }>({
     open: false,
     saving: false,
     form: { matricula: "", bairro: "", rua: "", numero: "", ponto_referencia: "", prioridade: "false" },
+    pdfFile: null,
   });
 
   function startEdit(row: ReligRow) {
@@ -306,7 +322,46 @@ export default function PendingReconnectionsTable() {
         ponto_referencia: row.ponto_referencia ?? "",
         prioridade: row.prioridade ? "true" : "false",
       },
+      pdfFile: null,
     });
+  }
+
+  async function uploadNewPdfIfAny(currentRow: ReligRow): Promise<string | null> {
+    if (!edit.pdfFile) return null;
+    const file = edit.pdfFile;
+
+    if (file.type !== "application/pdf") {
+      throw new Error("Anexe um arquivo PDF válido.");
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      throw new Error("PDF muito grande (máx. 15MB).");
+    }
+
+    const ts = Date.now();
+    const path = `religiacao/${currentRow.id}/ordem-${ts}.pdf`;
+
+    // Faz upload
+    const { error: upErr } = await supabase.storage
+      .from(STORAGE_BUCKET)
+      .upload(path, file, {
+        contentType: "application/pdf",
+        cacheControl: "3600",
+        upsert: true,
+      });
+
+    if (upErr) throw upErr;
+
+    // Remove antigo (best-effort; ignora erros)
+    const old = currentRow.pdf_ordem_path;
+    if (old && old !== path) {
+      try {
+        await supabase.storage.from(STORAGE_BUCKET).remove([old]);
+      } catch {
+        // ignore
+      }
+    }
+
+    return path;
   }
 
   async function saveEdit() {
@@ -322,12 +377,18 @@ export default function PendingReconnectionsTable() {
         ponto_referencia: f.ponto_referencia.trim() === "" ? null : f.ponto_referencia.trim(),
         prioridade: f.prioridade === "true",
       };
+
+      // upload opcional do PDF
+      const newPath = await uploadNewPdfIfAny(edit.row);
+      if (newPath) patch.pdf_ordem_path = newPath;
+
       const { error } = await supabase.from("ordens_religacao").update(patch).eq("id", edit.row.id);
       if (error) throw error;
+
       await load();
       setMsg({ kind: "ok", text: "Papeleta atualizada com sucesso." });
       setTimeout(() => setMsg(null), 1600);
-      setEdit((s) => ({ ...s, open: false, saving: false, row: undefined }));
+      setEdit((s) => ({ ...s, open: false, saving: false, row: undefined, pdfFile: null }));
     } catch (e: any) {
       setMsg({ kind: "err", text: e?.message || "Falha ao salvar." });
       setTimeout(() => setMsg(null), 2200);
@@ -465,15 +526,13 @@ export default function PendingReconnectionsTable() {
                     </div>
                   </td>
 
-                  {/* Solicitante (como no print: nome em cima, doc embaixo) */}
+                  {/* Solicitante (nome em cima, doc embaixo) */}
                   <td className="py-2 px-3">
                     <div className="flex flex-col leading-tight">
                       <span className="font-semibold uppercase tracking-wide text-slate-100 truncate">
                         {nome}
                       </span>
-                      <span className="text-xs text-slate-400 truncate">
-                        {doc}
-                      </span>
+                      <span className="text-xs text-slate-400 truncate">{doc}</span>
                     </div>
                   </td>
 
@@ -570,9 +629,129 @@ export default function PendingReconnectionsTable() {
         </table>
       </div>
 
-      {/* MODAL EDITAR PAPELETA (sem mudanças funcionais) */}
-      {/* ... (mantido igual ao seu modal atual) ... */}
+      {/* MODAL EDITAR PAPELETA */}
+      {edit.open && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-2xl">
+            <h3 className="text-lg font-semibold text-white mb-4">Editar papeleta de religação</h3>
 
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">Matrícula</label>
+                <input
+                  className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
+                  value={edit.form.matricula}
+                  onChange={(e) => setEdit((s) => ({ ...s, form: { ...s.form, matricula: e.target.value } }))}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">Bairro</label>
+                <input
+                  className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
+                  value={edit.form.bairro}
+                  onChange={(e) => setEdit((s) => ({ ...s, form: { ...s.form, bairro: e.target.value } }))}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">Rua</label>
+                <input
+                  className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
+                  value={edit.form.rua}
+                  onChange={(e) => setEdit((s) => ({ ...s, form: { ...s.form, rua: e.target.value } }))}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">Número</label>
+                <input
+                  className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
+                  value={edit.form.numero}
+                  onChange={(e) => setEdit((s) => ({ ...s, form: { ...s.form, numero: e.target.value } }))}
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-xs text-slate-300 mb-1">Ponto de referência</label>
+                <input
+                  className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
+                  value={edit.form.ponto_referencia}
+                  onChange={(e) =>
+                    setEdit((s) => ({ ...s, form: { ...s.form, ponto_referencia: e.target.value } }))
+                  }
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">Prioridade</label>
+                <select
+                  className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
+                  value={edit.form.prioridade}
+                  onChange={(e) => setEdit((s) => ({ ...s, form: { ...s.form, prioridade: e.target.value as any } }))}
+                >
+                  <option value="false">normal</option>
+                  <option value="true">PRIORIDADE</option>
+                </select>
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-xs text-slate-300 mb-1">Arquivo da ordem (PDF)</label>
+                <div className="flex flex-col md:flex-row gap-3 md:items-center">
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                      const f = e.currentTarget.files?.[0] || null;
+                      setEdit((s) => ({ ...s, pdfFile: f }));
+                    }}
+                    className="block w-full text-sm text-slate-200 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-indigo-600 file:text-white hover:file:bg-indigo-500"
+                  />
+                  {edit.row?.pdf_ordem_path ? (
+                    <a
+                      href={supabase.storage.from(STORAGE_BUCKET).getPublicUrl(edit.row.pdf_ordem_path).data.publicUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs px-3 py-2 rounded-lg bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/40 hover:bg-indigo-500/30 whitespace-nowrap"
+                    >
+                      Ver PDF atual
+                    </a>
+                  ) : (
+                    <span className="text-xs text-slate-400">Sem PDF atual</span>
+                  )}
+                  {edit.pdfFile && (
+                    <span className="text-xs text-slate-300 truncate">
+                      Selecionado: <b>{edit.pdfFile.name}</b>
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  (Opcional) Se escolher um novo PDF, o atual será substituído.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-3">
+              <button
+                onClick={() => setEdit((s) => ({ ...s, open: false }))}
+                disabled={edit.saving}
+                className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 hover:bg-white/20 text-white text-sm"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={saveEdit}
+                disabled={edit.saving}
+                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm disabled:opacity-60"
+              >
+                {edit.saving ? "Salvando…" : "Salvar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast */}
       {msg && (
         <div
           className={`fixed bottom-5 right-5 px-4 py-2 rounded-lg shadow-lg text-sm z-50 ${

@@ -1,3 +1,4 @@
+// src/components/tables/AllOrdersTable.tsx
 import * as React from "react";
 import supabase from "../../lib/supabase";
 import ListFilterBar, { ListFilter } from "../../components/filters/ListFilterBar";
@@ -78,9 +79,7 @@ export default function AllOrdersTable() {
       try {
         const { data: udata, error: uerr } = await supabase.auth.getUser();
         if (uerr) throw uerr;
-        const user = (udata && "user" in udata ? (udata as any).user : undefined) as
-          | { id: string }
-          | undefined;
+        const user = (udata && "user" in udata ? (udata as any).user : undefined) as { id: string } | undefined;
         if (!user) {
           setUserRole("VISITANTE");
           return;
@@ -100,6 +99,8 @@ export default function AllOrdersTable() {
 
   const [deleteMode, setDeleteMode] = React.useState(false);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = React.useState(false); // ⬅️ controle do fluxo de exclusão
+
   function toggleSelect(id: string) {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -177,6 +178,7 @@ export default function AllOrdersTable() {
   }
 
   async function handleBulkDelete() {
+    if (deleting) return; // evita cliques duplos
     if (!canDelete) {
       setPermText("Apenas ADM, DIRETOR e COORDENADOR podem excluir ordens.");
       setPermModalOpen(true);
@@ -189,22 +191,54 @@ export default function AllOrdersTable() {
     }
 
     const ids = Array.from(selectedIds);
-    const { error } = await supabase.from("ordens_corte").delete().in("id", ids);
-    if (error) {
-      if (/Impedido|insufficient_privilege|permission|RLS|row-level|policy|denied/i.test(error.message)) {
-        setPermText("A operação foi bloqueada pelas regras de segurança.");
-        setPermModalOpen(true);
+    setDeleting(true);
+    try {
+      // Solicita ao Supabase que retorne as linhas realmente excluídas
+      const { data: deletedRows, error } = await supabase
+        .from("ordens_corte")
+        .delete()
+        .in("id", ids)
+        .select("id"); // ← confirma exatamente o que saiu do banco
+
+      if (error) {
+        if (/Impedido|insufficient_privilege|permission|RLS|row-level|policy|denied/i.test(error.message)) {
+          setPermText("A operação foi bloqueada pelas regras de segurança (RLS).");
+          setPermModalOpen(true);
+          return;
+        }
+        setMsg({ kind: "err", text: `Falha ao excluir: ${error.message}` });
+        setTimeout(() => setMsg(null), 2200);
         return;
       }
-      setMsg({ kind: "err", text: `Falha ao excluir: ${error.message}` });
+
+      const deletedSet = new Set<string>((deletedRows ?? []).map((r: any) => r.id));
+      const notDeleted = ids.filter((id) => !deletedSet.has(id));
+
+      // Remove localmente o que foi confirmado
+      setRows((prev) => prev.filter((r) => !deletedSet.has(r.id)));
+
+      // Recarrega do servidor para garantir consistência total
+      await load();
+
+      if (notDeleted.length === 0) {
+        setMsg({ kind: "ok", text: `OS excluídas: ${deletedSet.size}` });
+        setSelectedIds(new Set());
+        setDeleteMode(false);
+      } else {
+        // Mantém selecionadas as que não saíram
+        setSelectedIds(new Set(notDeleted));
+        setMsg({
+          kind: "err",
+          text: `Algumas OS não foram excluídas (${notDeleted.length}). Verifique permissões/RLS.`,
+        });
+      }
       setTimeout(() => setMsg(null), 2200);
-      return;
+    } catch (e: any) {
+      setMsg({ kind: "err", text: e?.message || "Falha ao excluir." });
+      setTimeout(() => setMsg(null), 2200);
+    } finally {
+      setDeleting(false);
     }
-    setRows((prev) => prev.filter((r) => !selectedIds.has(r.id)));
-    setSelectedIds(new Set());
-    setDeleteMode(false);
-    setMsg({ kind: "ok", text: "OS excluídas com sucesso." });
-    setTimeout(() => setMsg(null), 1800);
   }
 
   const filteredRows = React.useMemo(() => {
@@ -244,7 +278,7 @@ export default function AllOrdersTable() {
       );
     if (val === false)
       return (
-        <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-rose-600/20 text-rose-200 ring-rose-400/40 whitespace-nowrap">
+        <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-full ring-1 bg-rose-600/20 text-rose-200 ring-rose-400/30 whitespace-nowrap">
           NÃO
         </span>
       );
