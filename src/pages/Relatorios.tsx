@@ -197,7 +197,6 @@ export default function ReportsPage() {
     setOrder(ids);
     setSelected(ids);
     setRows([]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base, campos]);
 
   const orderedSelectedIds = React.useMemo(
@@ -296,16 +295,18 @@ export default function ReportsPage() {
       const startAt = toStart(start);
       const endAt = toEnd(end);
       const pick = (arr: any[] | null | undefined) => (Array.isArray(arr) ? arr : []);
-      const result: any[] = [];
-      const pushWithGroup = (rows: any[], group: string) =>
-        rows.forEach((r) => result.push({ ...r, __group: group }));
+
+      // acumulador único (evita TS2451)
+      const outRows: any[] = [];
+      const pushWithGroup = (arr: any[], group: string) =>
+        arr.forEach((r) => outRows.push({ ...r, __group: group }));
 
       // ====== RELIGAÇÃO ======
       if (base === "religacao") {
         const hasAtivaEm = availableCols.has("ativa_em");
         const vAtiva = statusVariantsDB(["ativa"]);
 
-        // ATIVA: por ativa_em no período (fallback created_at) + status 'ativa'
+        // ATIVA
         if (activeStatusValues.includes("ativa")) {
           let q1 = supabase.from(table).select(safeCols.join(", "));
           if (hasAtivaEm) {
@@ -318,18 +319,19 @@ export default function ReportsPage() {
           q1 = q1.in("status", vAtiva);
           if (like) q1 = applyQuickSearch(q1, availableCols, like);
 
-          const { data, error } = await q1.order(hasAtivaEm ? "ativa_em" : "created_at", { ascending: false }).limit(1000);
+          const { data, error } = await q1
+            .order(hasAtivaEm ? "ativa_em" : "created_at", { ascending: false })
+            .limit(1000);
           if (error) throw error;
           pushWithGroup(pick(data), "ativa");
         }
 
-        // AGUARDANDO RELIGAÇÃO: criadas no período + não ativadas
+        // AGUARDANDO RELIGAÇÃO
         if (activeStatusValues.includes("aguardando_religacao")) {
           let q2 = supabase.from(table).select(safeCols.join(", "));
           if (startAt) q2 = q2.gte("created_at", startAt);
           if (endAt) q2 = q2.lte("created_at", endAt);
           if (hasAtivaEm) q2 = q2.is("ativa_em", null);
-          // excluir explicitamente as 'ativas'
           q2 = q2.not("status", "in", inList(vAtiva));
           if (like) q2 = applyQuickSearch(q2, availableCols, like);
 
@@ -344,7 +346,7 @@ export default function ReportsPage() {
         const hasCortadaEm = availableCols.has("cortada_em");
         const vCortada = statusVariantsDB(["cortada"]);
 
-        // CORTADA: por cortada_em (fallback created_at) + status 'cortada'
+        // CORTADA
         if (activeStatusValues.includes("cortada")) {
           let q1 = supabase.from(table).select(safeCols.join(", "));
           if (hasCortadaEm) {
@@ -357,18 +359,19 @@ export default function ReportsPage() {
           q1 = q1.in("status", vCortada);
           if (like) q1 = applyQuickSearch(q1, availableCols, like);
 
-          const { data, error } = await q1.order(hasCortadaEm ? "cortada_em" : "created_at", { ascending: false }).limit(1000);
+          const { data, error } = await q1
+            .order(hasCortadaEm ? "cortada_em" : "created_at", { ascending: false })
+            .limit(1000);
           if (error) throw error;
           pushWithGroup(pick(data), "cortada");
         }
 
-        // AGUARDANDO CORTE: criadas no período + não cortadas
+        // AGUARDANDO CORTE
         if (activeStatusValues.includes("aguardando_corte")) {
           let q2 = supabase.from(table).select(safeCols.join(", "));
           if (startAt) q2 = q2.gte("created_at", startAt);
           if (endAt) q2 = q2.lte("created_at", endAt);
           if (hasCortadaEm) q2 = q2.is("cortada_em", null);
-          // excluir explicitamente as 'cortadas'
           q2 = q2.not("status", "in", inList(vCortada));
           if (like) q2 = applyQuickSearch(q2, availableCols, like);
 
@@ -388,7 +391,8 @@ export default function ReportsPage() {
         if (base === "corte") return r.cortada_em ?? r.created_at ?? null;
         return r.created_at ?? null;
       };
-      result.sort((a, b) => {
+
+      outRows.sort((a, b) => {
         const gi = orderCanon.indexOf(String(a.__group));
         const gj = orderCanon.indexOf(String(b.__group));
         if (gi !== gj) return gi - gj;
@@ -397,7 +401,7 @@ export default function ReportsPage() {
         return db - da;
       });
 
-      setRows(result);
+      setRows(outRows);
     } catch (e: any) {
       setMsg(e?.message ?? "Falha ao gerar prévia.");
       setTimeout(() => setMsg(""), 3000);
@@ -476,6 +480,16 @@ export default function ReportsPage() {
       return;
     }
 
+    // identificar cancelamento do usuário (sem fallback)
+    const isAbort = (err: any) =>
+      err &&
+      (
+        err.name === "AbortError" ||
+        err.name === "NotAllowedError" ||
+        err.code === 20 ||
+        /aborted|abortado|cancel/i.test(String(err.message || ""))
+      );
+
     try {
       setLoading(true);
       setMsg("");
@@ -498,10 +512,10 @@ export default function ReportsPage() {
 
       // margens e respiros
       const pageMarginX = 36;
-      const innerGutterX = 10; // “folga” lateral para não colar na linha do timbre
-      const pageMarginTop = 160; // abaixo do cabeçalho do template
+      const innerGutterX = 10;
+      const pageMarginTop = 160;
       const bottomMargin = 32;
-      const footerReserve = 56; // garante leitura do rodapé impresso no template
+      const footerReserve = 56;
       const minY = bottomMargin + footerReserve;
 
       const headerHeight = 18;
@@ -571,7 +585,7 @@ export default function ReportsPage() {
           const text = UPPER(c.label);
           const tw = fontBold.widthOfTextAtSize(text, fontSizeHeader);
 
-          const align: "left" | "center" | "right" = c.align ?? "left";
+        const align: "left" | "center" | "right" = c.align ?? "left";
           let dx = colX + cellPadX;
           if (align === "center") dx = colX + Math.max(cellPadX, (cw - tw) / 2);
           else if (align === "right") dx = colX + Math.max(cellPadX, cw - cellPadX - tw);
@@ -678,7 +692,6 @@ export default function ReportsPage() {
             if (wrapped.length > maxLines) maxLines = wrapped.length;
           });
 
-          const rowLineHeight = 12;
           const rowHeight = Math.max(rowLineHeight * maxLines + cellPadY * 2, rowLineHeight + cellPadY * 2);
 
           if (cursorY - rowHeight < minY) {
@@ -757,7 +770,7 @@ export default function ReportsPage() {
         thickness: 0.8,
       });
 
-      // Numeração X de Y (respiro do rodapé)
+      // Numeração X de Y
       const pages = pdfDoc.getPages();
       const total = pages.length;
       const pagerText = (i: number) => `${i + 1} de ${total}`;
@@ -774,7 +787,7 @@ export default function ReportsPage() {
       // salvar bytes
       const bytes = await pdfDoc.save();
 
-      // ArrayBuffer “puro” (evita TS2322 em alguns TS configs)
+      // ArrayBuffer “puro”
       const ab =
         bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
           ? (bytes.buffer as ArrayBuffer)
@@ -782,17 +795,12 @@ export default function ReportsPage() {
 
       const filename = suggestFilename();
 
-      // Preferir File System Access API, se disponível (abre diálogo de salvar)
+      // Preferir File System Access API (abre diálogo do sistema)
       if (typeof window.showSaveFilePicker === "function") {
         try {
           const handle = await window.showSaveFilePicker({
             suggestedName: filename,
-            types: [
-              {
-                description: "Documento PDF",
-                accept: { "application/pdf": [".pdf"] },
-              },
-            ],
+            types: [{ description: "Documento PDF", accept: { "application/pdf": [".pdf"] } }],
           });
           const writable = await handle.createWritable();
           await writable.write(new Blob([ab], { type: "application/pdf" }));
@@ -801,11 +809,17 @@ export default function ReportsPage() {
           setTimeout(() => setMsg(""), 1800);
           return;
         } catch (err: any) {
-          // Se o usuário cancelar, apenas cair para o fallback de download silencioso
+          // Se o usuário cancelou, não fazer fallback (não baixa nada).
+          if (isAbort(err)) {
+            setMsg("Operação cancelada.");
+            setTimeout(() => setMsg(""), 1600);
+            return;
+          }
+          // Qualquer outro erro: cai no fallback de download automático
         }
       }
 
-      // Fallback: download automático (abre a barra/área de downloads do navegador)
+      // Fallback: download automático (para browsers sem showSaveFilePicker OU erro não-abort)
       const blob = new Blob([ab], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -1024,7 +1038,7 @@ export default function ReportsPage() {
                           </td>
                         );
                       })}
-                  </tr>
+                    </tr>
                   ))
                 )}
               </tbody>
